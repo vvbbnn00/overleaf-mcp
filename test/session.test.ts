@@ -1,6 +1,37 @@
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { probeSession } from '../src/session.js';
+import { EventEmitter } from 'node:events';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { chromium } from 'playwright';
+
+const directory = await mkdtemp(join(tmpdir(), 'overleaf-login-test-'));
+process.env.OVERLEAF_STATE_DIR = directory;
+const { authPath, baseUrl, browserLogin, probeSession } = await import('../src/session.js');
+after(() => rm(directory, { recursive: true, force: true }));
+
+test('successful login saves the session and closes the browser without waiting for user input', async t => {
+  const state = { cookies: [], origins: [] };
+  let closed = false;
+  const browser = Object.assign(new EventEmitter(), {
+    newContext: async () => ({
+      newPage: async () => ({ goto: async () => {}, waitForFunction: async () => {} }),
+      storageState: async () => state,
+    }),
+    close: async () => {
+      assert.deepEqual(JSON.parse(await readFile(authPath, 'utf8')), { baseUrl, state });
+      closed = true;
+      browser.emit('disconnected');
+    },
+  });
+  t.after(() => browser.emit('disconnected'));
+  t.mock.method(chromium, 'launch', async () => browser);
+  t.mock.method(console, 'error', () => {});
+
+  await browserLogin();
+  assert.equal(closed, true);
+});
 
 test('login failures are distinguished from temporary service errors and retry delays', async () => {
   for (const [status, headers, expected, retryAfterSeconds] of [

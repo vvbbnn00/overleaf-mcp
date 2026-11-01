@@ -68,14 +68,13 @@ export async function browserLogin() {
     const context = await browser.newContext({ storageState: saved, viewport: null });
     const page = await context.newPage();
     await page.goto(`${baseUrl}/project`, { waitUntil: 'domcontentloaded' });
-    console.error('Browser opened. Complete login manually. Passwords are not read or submitted by this program.');
+    console.error('Please sign in to Overleaf in the browser window.');
     await page.waitForFunction(() => {
       const id = document.querySelector('meta[name="ol-user_id"]')?.getAttribute('content');
       return Boolean(id) && /^\/project(?:\/|$)/.test(location.pathname);
     }, undefined, { timeout: 0 });
     await saveSession(context);
-    console.error('Login confirmed. Session saved with owner-only permissions. Browser remains open for live editing tests.');
-    await new Promise<void>(resolve => browser.once('disconnected', () => resolve()));
+    console.error('Login successful. Your session is saved and ready for your MCP client.');
   } finally {
     process.off('SIGINT', close);
     process.off('SIGTERM', close);

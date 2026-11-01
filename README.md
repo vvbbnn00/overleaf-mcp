@@ -40,7 +40,7 @@ npx --yes git+https://github.com/vvbbnn00/overleaf-mcp.git login
 
 The Git install needs npm to run the package's build script. This path has been tested with npm 10. If your npm version or policy blocks dependency build scripts, use the source installation below.
 
-Sign in manually in the browser window and complete any verification steps. The program does not read or submit your password. Once the terminal shows `Login confirmed`, press `Ctrl+C` to finish the login command; your saved session remains available.
+Sign in manually in the browser window and complete any verification steps. The program does not read or submit your password. Once you sign in, the browser closes and the command exits automatically. Your saved session is now ready for your MCP client.
 
 Check the saved session:
 
