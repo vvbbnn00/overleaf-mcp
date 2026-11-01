@@ -588,9 +588,12 @@ export class OverleafClient extends EventEmitter {
   private async changeCommentMessage(projectId: string, threadId: string, messageId: string, content?: string) {
     if (!/^[a-f\d]{24}$/i.test(messageId)) throw new Error("Use a message ID returned by get_review.");
     const before = await this.reviewThread(projectId, threadId);
-    if (!before.messages.some((message: any) => message.id === messageId)) throw new Error("Choose an existing message from get_review.");
+    const previousMessage = before.messages.find((message: any) => message.id === messageId);
+    if (!previousMessage) throw new Error("Choose an existing message from get_review.");
     const deleting = content === undefined;
-    const url = `/project/${projectId}/thread/${threadId}/messages/${messageId}`;
+    const currentUserId = deleting ? await this.dashboard.evaluate(() => document.querySelector('meta[name="ol-user_id"]')?.getAttribute('content')) : undefined;
+    const ownMessage = currentUserId && previousMessage.user_id === currentUserId;
+    const url = `/project/${projectId}/thread/${threadId}/${ownMessage ? 'own-messages' : 'messages'}/${messageId}`;
     await this.submitReviewRequest(deleting ? url : `${url}/edit`, deleting ? 'DELETE' : 'POST', deleting ? undefined : { content });
     const result = { projectId, threadId, messageId, applied: true };
     try {

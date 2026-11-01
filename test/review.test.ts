@@ -168,3 +168,20 @@ test('comment creation reports its posted thread when attaching the source range
     return true;
   });
 });
+
+test('message deletion uses author permissions for own replies and project permissions for other messages', async () => {
+  const messageId = 'bbbbbbbbbbbbbbbbbbbbbbbb';
+  for (const author of ['current-user', 'collaborator']) {
+    const client = Reflect.construct(OverleafClient, [{ close: async () => {} }, {}, { evaluate: async () => 'current-user' }]) as OverleafClient;
+    let deleted = false;
+    client.request = async (path, method = 'GET') => {
+      if (method === 'DELETE') {
+        assert.equal(path, `/project/${projectId}/thread/${threadId}/${author === 'current-user' ? 'own-messages' : 'messages'}/${messageId}`);
+        deleted = true;
+      }
+      return { [threadId]: { messages: deleted ? [] : [{ id: messageId, user_id: author }] } };
+    };
+    assert.equal((await client.deleteCommentMessage(projectId, threadId, messageId)).verified, true);
+    await client.close();
+  }
+});
