@@ -98,6 +98,16 @@ test('an uncertain write cannot be followed by another write on the same connect
   assert.equal(submissions, 1);
 });
 
+test('legacy review writes recheck resolved change IDs even when the text version stays the same', async () => {
+  let submissions = 0;
+  (globalThis as any).window = { __overleafMcp: {
+    connected: true, publicId: 'reader', generation: 1,
+    rpc: async (event: string) => event === 'joinDoc' ? [[], 4, [], { changes: [] }, 'sharejs-text-ot'] : (++submissions, []),
+  } };
+  await assert.rejects(submitDocumentEdit({ docId: 'doc', version: 4, type: 'sharejs-text-ot', op: [{ p: 0, d: 'accepted' }], expectedChangeIds: ['already-accepted'] }), /VERSION_CONFLICT/);
+  assert.equal(submissions, 0);
+});
+
 test('archive extraction paths cannot escape the output directory', () => {
   for (const name of ['../secret', 'a/../../secret', '/etc/passwd', 'C:/secret', 'a\\b', '\0']) assert.throws(() => archivePath('/tmp/project', name), /Unsafe/);
   assert.equal(archivePath('/tmp/project', '章节/一.tex'), '/tmp/project/章节/一.tex');

@@ -74,11 +74,11 @@ export function createMcpServer(connect = () => OverleafClient.connect()) {
       return respond(value);
     } catch (error: any) {
       if (error instanceof AuthenticationError) await resetClient(connection);
-      return { isError: true, content: [{ type: 'text' as const, text: !connected && error.code === 'ENOENT' ? 'No saved session. Run overleaf-mcp login (or npm run login from the source checkout).' : safeErrorMessage(error) }] };
+      return { isError: true, content: [{ type: 'text' as const, text: !connected && error.code === 'ENOENT' ? "Run overleaf-mcp login (or npm run login from the source checkout) to sign in." : safeErrorMessage(error) }] };
     }
   };
   const annotations = { readOnlyHint: true, destructiveHint: false, openWorldHint: true };
-  server.registerTool('get_session_status', { description: 'Check the saved browser session, observed cookie renewal and keepalive schedule. Never returns cookie values.', annotations }, async () => {
+  server.registerTool('get_session_status', { description: "Check authentication, cookie expiry metadata, observed session renewal and the keepalive schedule.", annotations }, async () => {
     const connection = getClient();
     try {
       const status = await (await connection).checkSession();
@@ -91,26 +91,51 @@ export function createMcpServer(connect = () => OverleafClient.connect()) {
   });
   server.registerTool('list_projects', { description: 'List projects accessible to the signed-in account, using the server response.', annotations }, () => result(c => c.listProjects()));
   server.registerTool('get_project', { description: 'Get the live project file tree and main document.', inputSchema: { projectId }, annotations }, ({ projectId }) => result(c => c.getProject(projectId)));
-  server.registerTool('get_collaboration', { description: 'Read explicitly invited members and current online users separately. Link collaborators may appear only in presence, so invitedMembers is not a complete participant list. Online connections are grouped by account; unavailable presence is reported as unknown.', inputSchema: { projectId }, annotations }, ({ projectId }) => result(c => c.getCollaboration(projectId)));
+  server.registerTool('get_collaboration', { description: "Read invited members and current online users. Shared-link collaborators appear in presence while connected. Online connections are grouped by account; presence.status describes availability.", inputSchema: { projectId }, annotations }, ({ projectId }) => result(c => c.getCollaboration(projectId)));
   server.registerTool('get_review', { description: 'Read project-wide comments, replies and resolution status, plus file/line anchors and visible tracked changes. path limits the annotation scan to one text file; threads remain project-wide. Data is limited by server permissions.', inputSchema: { projectId, path: z.string().optional() }, annotations }, ({ projectId, path }) => result(c => c.getReview(projectId, path)));
   const writeAnnotations = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
   server.registerTool('reply_to_comment', {
-    description: 'Post a reply to an existing review comment thread as the signed-in user. Use a threadId from get_review. Returns posted:true once Overleaf accepts the reply, plus the refreshed thread when available. readBackError does not mean the reply failed. On REPLY_STATUS_UNKNOWN, check get_review before retrying to avoid duplicate replies.',
+    description: "Reply to an existing review thread as the signed-in user. Use a threadId from get_review. posted:true confirms acceptance; readBackError reports a subsequent refresh error. On REPLY_STATUS_UNKNOWN, refresh get_review before retrying.",
     inputSchema: { projectId, threadId: z.string().regex(/^[a-f\d]{24}$/i), content: z.string().min(1) },
     annotations: { ...writeAnnotations, destructiveHint: false },
   }, ({ projectId, threadId, content }) => result(c => c.replyToComment(projectId, threadId, content)));
   const versionInput = { ...fileInput, expectedDocId: z.string().regex(/^[a-f\d]{24}$/i), expectedVersion: z.number().int().nonnegative() };
+  const threadInput = { projectId, threadId: z.string().regex(/^[a-f\d]{24}$/i) };
+  const messageInput = { ...threadInput, messageId: z.string().regex(/^[a-f\d]{24}$/i) };
+  server.registerTool('create_comment', {
+    description: "Create a review comment attached to one exact passage. Supply quote, expectedDocId and expectedVersion from a fresh read_file result. Choose a quote that occurs once. Returns the threadId and separate message, anchor and readback results.",
+    inputSchema: { ...versionInput, quote: z.string().min(1), content: z.string().min(1) }, annotations: { ...writeAnnotations, destructiveHint: false },
+  }, ({ projectId, path, expectedDocId, expectedVersion, quote, content }) => result(c => c.createComment(projectId, path, expectedDocId, expectedVersion, quote, content)));
+  server.registerTool('edit_comment_message', {
+    description: "Edit a message in a review thread. Get threadId and messageId from get_review. Supply the replacement content; Overleaf checks the current account permissions.",
+    inputSchema: { ...messageInput, content: z.string().min(1) }, annotations: writeAnnotations,
+  }, ({ projectId, threadId, messageId, content }) => result(c => c.editCommentMessage(projectId, threadId, messageId, content)));
+  server.registerTool('delete_comment_message', {
+    description: "Delete one message from a review thread using IDs from get_review. Overleaf checks the current account permissions. Use delete_comment_thread to remove a whole thread.",
+    inputSchema: messageInput, annotations: writeAnnotations,
+  }, ({ projectId, threadId, messageId }) => result(c => c.deleteCommentMessage(projectId, threadId, messageId)));
+  for (const [action, description] of [
+    ['resolve', "Mark a review thread as resolved. Use its path and threadId from get_review."],
+    ['reopen', "Reopen a resolved review thread. Use its path and threadId from get_review."],
+    ['delete', "Delete a review thread, its messages and its source annotation. Use its path and threadId from get_review."],
+  ] as const) server.registerTool(`${action}_comment_thread`, {
+    description, inputSchema: { ...threadInput, path: z.string().min(1) }, annotations: writeAnnotations,
+  }, ({ projectId, path, threadId }) => result(c => c.changeCommentThread(projectId, path, threadId, action)));
+  for (const action of ['accept', 'reject'] as const) server.registerTool(`${action}_tracked_changes`, {
+    description: `${action === 'accept' ? 'Accept' : 'Reject'} selected tracked changes. Supply changeIds, expectedDocId and expectedVersion from a fresh get_review result for the file. Returns server confirmation, updated text and review data.`,
+    inputSchema: { ...versionInput, changeIds: z.array(z.string().min(1)).min(1) }, annotations: writeAnnotations,
+  }, ({ projectId, path, expectedDocId, expectedVersion, changeIds }) => result(c => c.decideTrackedChanges(projectId, path, expectedDocId, expectedVersion, changeIds, action)));
   server.registerTool('write_file', { description: 'Replace text using OT edits that retain unchanged regions. Requires docId/version from a recent read. Rejects stale versions; waits for server application and verifies document identity and content. An unknown write outcome blocks further writes to that document on the connection; reconnect and inspect before retrying. Concurrent edits may be merged by Overleaf.', inputSchema: { ...versionInput, content: z.string() }, annotations: writeAnnotations }, ({ projectId, path, expectedDocId, expectedVersion, content }) => result(c => c.writeFile(projectId, path, expectedDocId, expectedVersion, { content })));
   server.registerTool('replace_text', { description: 'Replace exactly one occurrence of oldText in a file, preserving surrounding content. Requires a recent document ID and version. Reports confirmed application separately from final-content verification.', inputSchema: { ...versionInput, oldText: z.string().min(1), newText: z.string() }, annotations: writeAnnotations }, ({ projectId, path, expectedDocId, expectedVersion, oldText, newText }) => result(c => c.writeFile(projectId, path, expectedDocId, expectedVersion, { oldText, newText })));
-  server.registerTool('create_file', { description: 'Create an empty editable text file. name is a filename, not a path. Omit parentFolderId for the project root. Then use write_file to populate it.', inputSchema: { projectId, name: z.string().min(1), parentFolderId: z.string().regex(/^[a-f\d]{24}$/i).optional() }, annotations: { ...writeAnnotations, destructiveHint: false } }, ({ projectId, name, parentFolderId }) => result(c => c.createFile(projectId, name, parentFolderId)));
+  server.registerTool('create_file', { description: "Create an empty editable text file. Supply a filename in name and choose its folder with parentFolderId, which defaults to the project root. Use write_file to populate it.", inputSchema: { projectId, name: z.string().min(1), parentFolderId: z.string().regex(/^[a-f\d]{24}$/i).optional() }, annotations: { ...writeAnnotations, destructiveHint: false } }, ({ projectId, name, parentFolderId }) => result(c => c.createFile(projectId, name, parentFolderId)));
   server.registerTool('upload_file', {
-    description: 'Upload one local file to an existing project folder. localPath must be absolute on the MCP server. path is the project-relative destination, defaulting to the local basename. overwrite defaults to false; true explicitly permits replacing a same-name text document or binary file. Returns server acceptance, actual location and content verification separately. An unverified or unknown result must be inspected before retrying. ZIPs are uploaded as files, not imported as projects.',
+    description: "Upload one local file to an existing project folder. localPath must be absolute on the MCP server. path is the project-relative destination, defaulting to the local basename. overwrite defaults to false; true explicitly permits replacing a same-name text document or binary file. Returns server acceptance, actual location and content verification separately. Inspect an unverified or unknown result before retrying. ZIPs are saved as project attachments.",
     inputSchema: { projectId, localPath: z.string().min(1), path: z.string().min(1).optional(), overwrite: z.boolean().default(false) }, annotations: writeAnnotations,
   }, ({ projectId, localPath, path, overwrite }) => result(c => c.uploadFile(projectId, localPath, path, overwrite)));
   server.registerTool('download_file', { description: 'Download a text file or binary attachment as a local artifact. Text documents come from a fresh live snapshot.', inputSchema: fileInput, annotations }, ({ projectId, path }) => result(c => c.downloadFile(projectId, path)));
-  server.registerTool('download_project', { description: 'Download the complete current source ZIP, or an API-accessible historical project version. historyVersion is a project-history version, not a document OT version.', inputSchema: { projectId, historyVersion: z.number().int().nonnegative().optional() }, annotations }, ({ projectId, historyVersion }) => result(c => c.downloadProject(projectId, historyVersion)));
-  server.registerTool('list_history_labels', { description: 'Return project version labels visible to the current session, without local plan restrictions.', inputSchema: { projectId }, annotations }, ({ projectId }) => result(c => c.historyLabels(projectId)));
-  server.registerTool('get_history_diff', { description: 'Compare two project-history versions. With path, returns file content differences; without path, returns file-tree differences. Use versions returned by list_history.', inputSchema: { projectId, from: z.number().int().nonnegative(), to: z.number().int().nonnegative(), path: z.string().optional() }, annotations }, ({ projectId, from, to, path }) => result(c => c.historyDiff(projectId, from, to, path)));
+  server.registerTool('download_project', { description: "Download the current source ZIP or an accessible historical version. Use project-history version numbers returned by list_history for historyVersion.", inputSchema: { projectId, historyVersion: z.number().int().nonnegative().optional() }, annotations }, ({ projectId, historyVersion }) => result(c => c.downloadProject(projectId, historyVersion)));
+  server.registerTool('list_history_labels', { description: "Return project version labels accessible to the current account.", inputSchema: { projectId }, annotations }, ({ projectId }) => result(c => c.historyLabels(projectId)));
+  server.registerTool('get_history_diff', { description: "Compare two project-history versions. Supply path for single-file text differences; omit path for file-tree differences. Use versions returned by list_history.", inputSchema: { projectId, from: z.number().int().nonnegative(), to: z.number().int().nonnegative(), path: z.string().optional() }, annotations }, ({ projectId, from, to, path }) => result(c => c.historyDiff(projectId, from, to, path)));
   server.registerTool('compile_project', {
     description: 'Start compilation and return a job ID immediately. mode=auto tries Overleaf first and falls back locally for timeout/service errors. Local compilation needs latexmk and the selected engine. Poll get_compile_result for this build PDF and logs.',
     inputSchema: { projectId, mode: z.enum(['auto', 'remote', 'local']).default('auto'), rootPath: z.string().optional(), compiler: z.enum(['pdflatex', 'xelatex', 'lualatex']).optional(), timeoutSeconds: z.number().int().min(1).max(600).default(120) },
@@ -131,7 +156,7 @@ export function createMcpServer(connect = () => OverleafClient.connect()) {
     return job ? respond(job) : { isError: true, content: [{ type: 'text' as const, text: 'Unknown job ID (jobs belong to this server process)' }] };
   });
   server.registerTool('read_file', {
-    description: 'Read a text file directly from the live document server. Each call obtains a fresh snapshot and version, not a ZIP or disk cache. Optional 1-based line range.',
+    description: "Read current text from the live document server. Each call gets a fresh snapshot and version. Optionally select a 1-based line range.",
     inputSchema: { ...fileInput, startLine: z.number().int().positive().optional(), endLine: z.number().int().positive().optional() }, annotations,
   }, ({ projectId, path, startLine, endLine }) => result(async c => ({ ...await c.readFile(projectId, path, startLine, endLine), resourceUri: uriFor(projectId, path) })));
   server.registerTool('watch_file', { description: 'Start watching server-pushed document changes. Use wait_for_file_change or subscribe to the returned resource URI.', inputSchema: fileInput, annotations }, ({ projectId, path }) => result(async c => {
@@ -182,7 +207,7 @@ export function createMcpServer(connect = () => OverleafClient.connect()) {
     return { removed };
   }));
   server.registerTool('list_history', {
-    description: 'Return the history API response unchanged. No local time-window restriction or subscription filtering is applied. Pass the server pagination cursor as before.',
+    description: "Return history entries and pagination data from the Overleaf API. Pass its pagination cursor in before to read the next page.",
     inputSchema: { projectId, before: z.string().optional() }, annotations,
   }, ({ projectId, before }) => result(c => c.history(projectId, before)));
   server.registerResource('live_file', new ResourceTemplate('overleaf://projects/{projectId}/files/{path}', { list: undefined }), { description: 'Latest server-confirmed text file content', mimeType: 'text/plain' }, async uri => {

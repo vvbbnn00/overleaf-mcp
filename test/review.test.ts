@@ -5,6 +5,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { OverleafClient } from '../src/client.js';
 import { createMcpServer } from '../src/mcp.js';
 import { AuthenticationError } from '../src/session.js';
+import { commentOperation, documentReview, trackedChangePlan } from '../src/review.js';
 
 const projectId = '0123456789abcdef01234567';
 const threadId = 'aaaaaaaaaaaaaaaaaaaaaaaa';
@@ -73,4 +74,97 @@ test('replies distinguish rejection from an uncertain submission and never retry
       assert.equal(service.posts(), 1);
     } finally { await service.client.close(); }
   }
+});
+
+test('legacy rejection restores adjacent Unicode changes and marks restored deletions as undo operations', () => {
+  const encoded = (value: string) => Buffer.from(value).toString('latin1');
+  const snapshot = { type: 'sharejs-text-ot', content: '前新词后', ranges: { changes: [
+    { id: 'insert', op: { p: 1, i: encoded('新词') } },
+    { id: 'delete', op: { p: 3, d: encoded('旧词') } },
+  ] } };
+  const plan = trackedChangePlan(snapshot, ['insert', 'delete'], 'reject');
+  let text = snapshot.content;
+  for (const op of plan.op as any[]) {
+    if ('i' in op) {
+      assert.equal(op.u, true, 'Overleaf uses the undo flag to clear the restored deletion marker');
+      text = text.slice(0, op.p) + op.i + text.slice(op.p);
+    } else {
+      assert.equal(text.slice(op.p, op.p + op.d.length), op.d);
+      text = text.slice(0, op.p) + text.slice(op.p + op.d.length);
+    }
+  }
+  assert.equal(text, '前旧词后');
+  assert.equal(plan.expectedContent, text);
+  assert.throws(() => commentOperation({ ...snapshot, content: '😀' }, '😀', threadId), /UNSUPPORTED_CHARACTER/);
+});
+
+test('modern review decisions preserve other tracked ranges and use snapshot Unicode offsets', () => {
+  const snapshot = { type: 'history-ot', content: '😀NEWoldKEEPz', reviewChanges: [
+    { range: { pos: 2, length: 3 }, tracking: { type: 'insert' } },
+    { range: { pos: 5, length: 3 }, tracking: { type: 'delete' } },
+    { range: { pos: 8, length: 4 }, tracking: { type: 'insert' } },
+  ] };
+  const ids = documentReview('main.tex', snapshot).trackedChanges.slice(0, 2).map(change => change.id);
+  for (const action of ['accept', 'reject'] as const) {
+    const plan = trackedChangePlan(snapshot, ids, action);
+    const marks = Array.from({ length: snapshot.content.length }, (_, i) => i >= 8 && i < 12 ? 'keep' : i >= 2 && i < 8 ? 'selected' : '');
+    let cursor = 0, result = '';
+    const resultMarks: string[] = [];
+    for (const op of (plan.op[0] as any).textOperation) {
+      if (typeof op === 'number' && op < 0) { cursor -= op; continue; }
+      const length = typeof op === 'number' ? op : op.r;
+      result += snapshot.content.slice(cursor, cursor + length);
+      resultMarks.push(...(typeof op === 'object' && op.tracking?.type === 'none' ? Array(length).fill('') : marks.slice(cursor, cursor + length)));
+      cursor += length;
+    }
+    assert.equal(cursor, snapshot.content.length);
+    assert.equal(result, action === 'accept' ? '😀NEWKEEPz' : '😀oldKEEPz');
+    assert.equal(plan.expectedContent, result);
+    assert.equal(resultMarks.filter(mark => mark === 'keep').length, 4);
+    assert.equal(resultMarks.filter(mark => mark === 'selected').length, 0);
+  }
+  assert.deepEqual(commentOperation(snapshot, 'KEEP', threadId), [{ commentId: threadId, ranges: [{ pos: 8, length: 4 }] }]);
+});
+
+function documentBackend() {
+  const service = backend();
+  const snapshot = { docId: 'cccccccccccccccccccccccc', version: 2, type: 'sharejs-text-ot', content: 'Passage', ranges: { comments: [], changes: [] } };
+  service.client.getProject = async () => ({ id: projectId, name: 'Review', files: [{ id: snapshot.docId, path: 'main.tex', kind: 'doc' }] });
+  const page = { evaluate: async () => snapshot };
+  (service.client as any).project = async () => ({ page });
+  return { ...service, snapshot, page };
+}
+
+test('stale document identities and versions are checked before review mutations', async () => {
+  const service = documentBackend();
+  await assert.rejects(service.client.createComment(projectId, 'main.tex', service.snapshot.docId, 1, 'Passage', 'Comment'), /VERSION_CONFLICT/);
+  await assert.rejects(service.client.decideTrackedChanges(projectId, 'main.tex', 'dddddddddddddddddddddddd', 2, ['change'], 'reject'), /VERSION_CONFLICT/);
+  assert.equal(service.posts(), 0);
+});
+
+test('thread deletion checks the source location before sending the mutation', async () => {
+  const service = documentBackend();
+  service.client.getReview = async () => ({ projectId, complete: true, unavailable: [], observedAt: '', threads: {}, files: [{ path: 'other.tex', comments: [{ threadId }] }] } as any);
+  await assert.rejects(service.client.changeCommentThread(projectId, 'main.tex', threadId, 'delete'), /other\.tex/);
+  assert.equal(service.posts(), 0);
+});
+
+test('comment creation reports its posted thread when attaching the source range needs a fresh version', async () => {
+  const service = documentBackend();
+  let postedId = '';
+  service.client.request = async path => { postedId = path.split('/')[4]; };
+  service.page.evaluate = async (fn?: unknown) => {
+    if ((fn as Function).name === 'submitDocumentEdit') throw new Error('VERSION_CONFLICT');
+    return service.snapshot;
+  };
+  const result = await service.client.createComment(projectId, 'main.tex', service.snapshot.docId, 2, 'Passage', 'Comment');
+  assert.equal(result.posted, true);
+  assert.equal(result.anchored, null);
+  assert.equal(result.threadId, postedId);
+  service.client.request = async path => { postedId = path.split('/')[4]; throw new Error('Request timed out'); };
+  await assert.rejects(service.client.createComment(projectId, 'main.tex', service.snapshot.docId, 2, 'Passage', 'Comment'), error => {
+    assert.ok((error as Error).message.includes(postedId));
+    assert.match((error as Error).message, /REVIEW_STATUS_UNKNOWN/);
+    return true;
+  });
 });

@@ -163,15 +163,18 @@ export async function readLivePresence() {
   return { status: 'available', users: [...users.values()], observedAt: new Date().toISOString() };
 }
 
-export async function submitDocumentEdit(input: { docId: string; version: number; type: string; op: unknown[] }) {
+export async function submitDocumentEdit(input: { docId: string; version: number; type: string; op: unknown[]; expectedChangeIds?: string[] }) {
   const bridge = (window as any).__overleafMcp;
   if (!bridge?.connected || !bridge.publicId) throw new Error('Realtime connection is unavailable for writing');
   bridge.uncertainWrites ??= new Set<string>();
   if (bridge.uncertainWrites.has(input.docId)) throw new Error('WRITE_STATUS_UNKNOWN: a previous write is unresolved on this connection; reconnect the MCP server and inspect the file before writing again');
   const generation = bridge.generation;
-  const [, version, , , type = 'sharejs-text-ot'] = await bridge.rpc('joinDoc', input.docId, -1, { supportsHistoryOT: true, encodeRanges: true });
+  const [, version, , ranges, type = 'sharejs-text-ot'] = await bridge.rpc('joinDoc', input.docId, -1, { supportsHistoryOT: true, encodeRanges: true });
   if (!bridge.connected || generation !== bridge.generation) throw new Error('Connection changed before write; no update submitted');
   if (version !== input.version || type !== input.type) throw new Error('VERSION_CONFLICT: file changed before write; read it again');
+  if (input.expectedChangeIds?.some(id => !ranges?.changes?.some((change: any) => change.id === id))) {
+    throw new Error("VERSION_CONFLICT: refresh get_review to select current tracked changes.");
+  }
   return new Promise<{ acceptedVersion: number; concurrentChanges: boolean }>((resolve, reject) => {
     let settled = false;
     const cleanup = () => {

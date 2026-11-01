@@ -4,9 +4,9 @@ import { authenticatedContext, AuthenticationError, baseUrl, probeSession, saveS
 import { installLiveBridge, readLiveDocument, readLivePresence, submitDocumentEdit } from './live-bridge.js';
 import { flattenFiles, flattenFolders, renewalDelay, selectLines, textEditOperation, replaceExact, type ProjectFile } from './model.js';
 import { saveArtifact } from './artifacts.js';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { posix } from 'node:path';
-import { documentReview } from './review.js';
+import { commentOperation, documentReview, trackedChangePlan } from './review.js';
 import { loadUpload, uploadDestination, uploadedTextMatches } from './uploads.js';
 import { safeErrorMessage } from './errors.js';
 
@@ -517,6 +517,134 @@ export class OverleafClient extends EventEmitter {
     } catch (error) {
       return { ...posted, thread: null, readBackError: safeErrorMessage(error) };
     }
+  }
+
+  private async reviewWrite<T>(projectId: string, path: string, run: () => Promise<T>): Promise<T> {
+    const key = `${projectId}:${path}`;
+    const pending = (this.writes.get(key) ?? Promise.resolve()).catch(() => {}).then(run);
+    this.writes.set(key, pending);
+    try { return await pending; } finally { if (this.writes.get(key) === pending) this.writes.delete(key); }
+  }
+
+  private async reviewSnapshot(projectId: string, path: string, expectedDocId?: string, expectedVersion?: number) {
+    const project = await this.getProject(projectId);
+    const file = project.files.find(file => file.path === path && file.kind === 'doc');
+    if (!file) throw new Error("Choose a text file from get_project.");
+    const { page } = await this.project(projectId);
+    const snapshot = await page.evaluate(readLiveDocument, file.id);
+    if ((expectedDocId !== undefined && snapshot.docId !== expectedDocId) || (expectedVersion !== undefined && snapshot.version !== expectedVersion)) {
+      throw new Error("VERSION_CONFLICT: read the file and its review data again.");
+    }
+    return { page, snapshot };
+  }
+
+  private async reviewThread(projectId: string, threadId: string) {
+    if (!/^[a-f\d]{24}$/i.test(projectId) || !/^[a-f\d]{24}$/i.test(threadId)) throw new Error("Use project and thread IDs returned by get_review.");
+    const thread = (await this.request(`/project/${projectId}/threads`))[threadId];
+    if (!thread) throw new Error("Choose an existing thread from get_review.");
+    return thread;
+  }
+
+  private async submitReviewRequest(path: string, method: string, body?: unknown) {
+    try { return await this.request(path, method, body); }
+    catch (error: any) {
+      if (error instanceof AuthenticationError || (error.status >= 400 && error.status < 500)) throw error;
+      throw new Error(`REVIEW_STATUS_UNKNOWN: ${safeErrorMessage(error)}; refresh get_review before retrying`);
+    }
+  }
+
+  async createComment(projectId: string, path: string, expectedDocId: string, expectedVersion: number, quote: string, content: string) {
+    if (!content.trim()) throw new Error("Enter the comment text.");
+    return this.reviewWrite(projectId, path, async () => {
+      const { page, snapshot } = await this.reviewSnapshot(projectId, path, expectedDocId, expectedVersion);
+      const threadId = randomBytes(12).toString('hex');
+      const op = commentOperation(snapshot, quote, threadId);
+      try { await this.submitReviewRequest(`/project/${projectId}/thread/${threadId}/messages`, 'POST', { content }); }
+      catch (error) {
+        if (error instanceof Error && error.message.startsWith('REVIEW_STATUS_UNKNOWN')) throw new Error(`${error.message}; threadId: ${threadId}`);
+        throw error;
+      }
+      const posted = { projectId, path, docId: snapshot.docId, threadId, posted: true };
+      let acknowledgment;
+      try { acknowledgment = await page.evaluate(submitDocumentEdit, { docId: snapshot.docId, version: snapshot.version, type: snapshot.type, op }); }
+      catch (error) { return { ...posted, anchored: null, verified: false, error: safeErrorMessage(error) }; }
+      try {
+        const review = await this.getReview(projectId, path);
+        const anchored = review.files.some(file => file.docId === snapshot.docId && file.comments.some(comment => comment.threadId === threadId));
+        return { ...posted, ...acknowledgment, anchored: true, verified: anchored, review };
+      } catch (error) { return { ...posted, ...acknowledgment, anchored: true, verified: false, readBackError: safeErrorMessage(error) }; }
+    });
+  }
+
+  async editCommentMessage(projectId: string, threadId: string, messageId: string, content: string) {
+    if (!content.trim()) throw new Error("Enter the replacement message text.");
+    return this.changeCommentMessage(projectId, threadId, messageId, content);
+  }
+
+  async deleteCommentMessage(projectId: string, threadId: string, messageId: string) {
+    return this.changeCommentMessage(projectId, threadId, messageId);
+  }
+
+  private async changeCommentMessage(projectId: string, threadId: string, messageId: string, content?: string) {
+    if (!/^[a-f\d]{24}$/i.test(messageId)) throw new Error("Use a message ID returned by get_review.");
+    const before = await this.reviewThread(projectId, threadId);
+    if (!before.messages.some((message: any) => message.id === messageId)) throw new Error("Choose an existing message from get_review.");
+    const deleting = content === undefined;
+    const url = `/project/${projectId}/thread/${threadId}/messages/${messageId}`;
+    await this.submitReviewRequest(deleting ? url : `${url}/edit`, deleting ? 'DELETE' : 'POST', deleting ? undefined : { content });
+    const result = { projectId, threadId, messageId, applied: true };
+    try {
+      const thread = (await this.request(`/project/${projectId}/threads`))[threadId] ?? null;
+      const message = thread?.messages.find((message: any) => message.id === messageId);
+      return { ...result, verified: deleting ? !message : message?.content === content, thread };
+    } catch (error) { return { ...result, verified: false, readBackError: safeErrorMessage(error) }; }
+  }
+
+  async changeCommentThread(projectId: string, path: string, threadId: string, action: 'resolve' | 'reopen' | 'delete') {
+    return this.reviewWrite(projectId, path, async () => {
+      await this.reviewThread(projectId, threadId);
+      const { snapshot } = await this.reviewSnapshot(projectId, path);
+      if (!documentReview(path, snapshot).comments.some(comment => comment.threadId === threadId)) {
+        const all = await this.getReview(projectId);
+        const location = all.files.find(file => file.comments.some(comment => comment.threadId === threadId));
+        if (location) throw new Error(`Use path ${location.path} for this comment thread.`);
+        if (action !== 'delete' || !all.complete) throw new Error("Refresh get_review to select the comment location.");
+      }
+      const url = `/project/${projectId}/doc/${snapshot.docId}/thread/${threadId}`;
+      await this.submitReviewRequest(action === 'delete' ? url : `${url}/${action}`, action === 'delete' ? 'DELETE' : 'POST');
+      const result = { projectId, path, docId: snapshot.docId, threadId, action, applied: true };
+      try {
+        const review = await this.getReview(projectId, path);
+        const thread = review.threads[threadId];
+        const verified = action === 'delete'
+          ? !thread && review.complete && review.files.every(file => file.comments.every(comment => comment.threadId !== threadId))
+          : Boolean(thread) && Boolean(thread.resolved) === (action === 'resolve');
+        return { ...result, verified, review };
+      } catch (error) { return { ...result, verified: false, readBackError: safeErrorMessage(error) }; }
+    });
+  }
+
+  async decideTrackedChanges(projectId: string, path: string, expectedDocId: string, expectedVersion: number, changeIds: string[], action: 'accept' | 'reject') {
+    return this.reviewWrite(projectId, path, async () => {
+      const { page, snapshot } = await this.reviewSnapshot(projectId, path, expectedDocId, expectedVersion);
+      const plan = trackedChangePlan(snapshot, changeIds, action);
+      let acknowledgment;
+      if (snapshot.type === 'sharejs-text-ot' && action === 'accept') {
+        await this.submitReviewRequest(`/project/${projectId}/doc/${snapshot.docId}/changes/accept`, 'POST', { change_ids: [...new Set(changeIds)] });
+      } else {
+        acknowledgment = await page.evaluate(submitDocumentEdit, { docId: snapshot.docId, version: snapshot.version, type: snapshot.type, op: plan.op,
+          ...(snapshot.type === 'sharejs-text-ot' ? { expectedChangeIds: changeIds } : {}) });
+      }
+      const result = { projectId, path, docId: snapshot.docId, changeIds, action, applied: true, ...acknowledgment };
+      try {
+        const after = (await this.reviewSnapshot(projectId, path)).snapshot;
+        const review = documentReview(path, after);
+        const verified = after.docId === snapshot.docId && (snapshot.type === 'history-ot'
+          ? after.version >= acknowledgment!.acceptedVersion
+          : review.trackedChanges.every(change => !changeIds.includes(change.id)));
+        return { ...result, verified, matchesRequestedContent: after.content === plan.expectedContent, content: after.content, version: after.version, review };
+      } catch (error) { return { ...result, verified: false, readBackError: safeErrorMessage(error) }; }
+    });
   }
 
   async history(projectId: string, before?: string) {
