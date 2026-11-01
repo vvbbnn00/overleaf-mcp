@@ -2,8 +2,9 @@
   "name": "overleaf-mcp",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
-  "description": "Experimental Overleaf MCP server with browser login and live document reads",
+  "description": "Local MCP server for Overleaf projects, live editing, file transfer and compilation",
   "engines": {
     "node": ">=22"
   },
