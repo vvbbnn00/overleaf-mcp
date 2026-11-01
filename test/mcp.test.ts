@@ -27,16 +27,7 @@ async function setup() {
   return { client, backend, stopped, close: async () => { await client.close(); await host.close(); } };
 }
 
-test('resource unsubscribe releases its watch', async () => {
-  const { client, stopped, close } = await setup();
-  try {
-    await client.subscribeResource({ uri });
-    await client.unsubscribeResource({ uri });
-    assert.deepEqual(stopped, [watchId]);
-  } finally { await close(); }
-});
-
-test('stopping a tool watch does not disable an active resource subscription', async () => {
+test('tool and resource subscriptions remain independent and release their last watch', async () => {
   const { client, stopped, close } = await setup();
   try {
     await client.subscribeResource({ uri });

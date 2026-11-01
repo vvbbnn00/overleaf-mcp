@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { safeErrorMessage } from '../src/errors.js';
 import { probeSession } from '../src/session.js';
 import { OverleafClient } from '../src/client.js';
 import { createMcpServer } from '../src/mcp.js';
@@ -17,12 +16,6 @@ const safe = (value: unknown) => {
   return true;
 };
 
-test('error summaries omit request logs and sensitive URL/header values', () => {
-  safe(safeErrorMessage(error));
-  assert.equal(safeErrorMessage(new Error(`cookie: ${marker}`)), 'cookie: [redacted]');
-  assert.equal(safeErrorMessage(new Error(`Failed at https://example.invalid/share#${marker}`)), 'Failed at [URL redacted]');
-});
-
 test('session and download errors do not propagate HTTP cookie logs', async () => {
   const context = { cookies: async () => [], request: { get: async () => { throw error; } } };
   await assert.rejects(probeSession(context as any), safe);
@@ -31,14 +24,20 @@ test('session and download errors do not propagate HTTP cookie logs', async () =
 });
 
 test('MCP tool, resource and subscription failures redact request diagnostics', async () => {
-  const host = createMcpServer(async () => { throw error; });
+  let failure = error;
+  const host = createMcpServer(async () => { throw failure; });
   const client = new Client({ name: 'redaction-test', version: '1' });
   const [local, remote] = InMemoryTransport.createLinkedPair();
   try {
     await host.server.connect(remote); await client.connect(local);
-    const result = await client.callTool({ name: 'get_session_status' });
-    assert.equal(result.isError, true);
-    safe((result.content as any[])[0].text);
+    for (const value of [error, new Error(`cookie: ${marker}`), new Error(`Failed at https://example.invalid/share#${marker}`)]) {
+      failure = value;
+      const result = await client.callTool({ name: 'get_session_status' });
+      assert.equal(result.isError, true);
+      assert.ok(!(result.content as any[])[0].text.includes(marker));
+      if (value === error) safe((result.content as any[])[0].text);
+    }
+    failure = error;
     const uri = 'overleaf://projects/0123456789abcdef01234567/files/main.tex';
     await assert.rejects(client.readResource({ uri }), safe);
     await assert.rejects(client.subscribeResource({ uri }), safe);

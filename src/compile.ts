@@ -18,7 +18,7 @@ async function executable(name: string) {
   return undefined;
 }
 
-export function localCompileArguments(engine: string, rootPath: string, outputDir: string) {
+function localCompileArguments(engine: string, rootPath: string, outputDir: string) {
   const mode = { pdflatex: '-pdf', xelatex: '-xelatex', lualatex: '-lualatex' }[engine];
   if (!mode) throw new Error('Unsupported local compiler');
   return ['-norc', mode, '-no-shell-escape', '-interaction=nonstopmode', '-halt-on-error', '-file-line-error', `-outdir=${outputDir}`, `./${rootPath}`];

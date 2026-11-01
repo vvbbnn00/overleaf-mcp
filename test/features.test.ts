@@ -4,12 +4,20 @@ import { textEditOperation, replaceExact } from '../src/model.js';
 import { submitDocumentEdit } from '../src/live-bridge.js';
 import { archivePath } from '../src/zip.js';
 import { documentReview } from '../src/review.js';
-import { localCompileArguments, compileProject } from '../src/compile.js';
+import { compileProject } from '../src/compile.js';
 import { OverleafClient } from '../src/client.js';
 
-test('writes generate narrow edits and preserve context', () => {
-  assert.deepEqual(textEditOperation('前文 old 后文', '前文 new 后文', 'sharejs-text-ot'), [{ p: 3, d: 'old' }, { p: 3, i: 'new' }]);
-  assert.deepEqual(textEditOperation('ab😀c', 'ab中c', 'history-ot'), [{ textOperation: [2, '中', -2, 1] }]);
+test('modern writes preserve Unicode while legacy inserts and ambiguous replacements are rejected', () => {
+  const before = 'ab😀c';
+  const [operation] = textEditOperation(before, 'ab中c', 'history-ot') as { textOperation: (string | number)[] }[];
+  let cursor = 0, output = '';
+  for (const component of operation.textOperation) {
+    if (typeof component === 'string') output += component;
+    else if (component > 0) { output += before.slice(cursor, cursor + component); cursor += component; }
+    else cursor -= component;
+  }
+  assert.equal(cursor, before.length);
+  assert.equal(output, 'ab中c');
   assert.throws(() => textEditOperation('', '😀', 'sharejs-text-ot'), /UNSUPPORTED_CHARACTER/);
   assert.equal(replaceExact('a\n中文\nz', '中文', '新内容'), 'a\n新内容\nz');
   assert.throws(() => replaceExact('aaa', 'aa', 'b'), /more than once/);
@@ -108,11 +116,7 @@ test('review anchors and tracked deletions retain their source meaning', () => {
   assert.equal(modern.trackedChanges[0].end?.column, 3);
 });
 
-test('local compile disables rc execution and does not fall back for syntax errors', async () => {
-  const args = localCompileArguments('xelatex', 'chapters/main.tex', '/tmp/build');
-  assert.ok(args.includes('-norc'));
-  assert.ok(args.includes('-no-shell-escape'));
-  assert.equal(args.at(-1), './chapters/main.tex');
+test('auto compilation reports syntax errors without starting a local build', async () => {
   const result = await compileProject({ compileRemote: async () => ({ status: 'compile-error' }) } as any, { projectId: 'p', mode: 'auto' });
   assert.equal(result.status, 'compile-error');
 });

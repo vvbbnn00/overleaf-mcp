@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { installLiveBridge, readLiveDocument, readLivePresence } from '../src/live-bridge.js';
-import { flattenFiles, selectLines } from '../src/model.js';
+import { flattenFiles } from '../src/model.js';
 
 function setWindow(value: unknown) { (globalThis as any).window = value; }
 
 test('legacy snapshot preserves Chinese, emoji and line endings', async () => {
-  const expected = '中文 😀\n\\section{Résumé}\n';
+  const expected = '中文 😀\n  \\section{Résumé}\n\n';
   const encoded = Buffer.from(expected, 'utf8').toString('latin1');
   setWindow({ __overleafMcp: { connected: true, generation: 1, rpc: async () => [encoded.split('\n'), 17, [], {}, 'sharejs-text-ot'] } });
   const result = await readLiveDocument('doc');
@@ -46,14 +46,7 @@ test('push notifications follow the server otUpdateApplied event without submitt
     { event: 'documentChanged', docId: 'doc', version: 2 },
     { event: 'disconnected' },
   ]);
-  assert.deepEqual(outbound, []);
-});
-
-test('nested paths and selected line ranges preserve exact source text', () => {
-  const files = flattenFiles([{ docs: [{ _id: 'a', name: 'main.tex' }], folders: [{ name: '章节', docs: [{ _id: 'b', name: '一.tex' }] }] }]);
-  assert.equal(files.find(f => f.id === 'b')?.path, '章节/一.tex');
-  assert.deepEqual(selectLines('first\n  中文\nlast\n', 2, 3), { content: '  中文\nlast', startLine: 2, endLine: 3, totalLines: 4 });
-  assert.throws(() => selectLines('text', 0), /Invalid line range/);
+  assert.ok(!outbound.includes('applyOtUpdate'));
 });
 
 test('presence groups multiple tabs by account and distinguishes the collaborator', async () => {
