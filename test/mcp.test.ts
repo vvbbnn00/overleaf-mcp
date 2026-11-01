@@ -67,6 +67,18 @@ test('a missing saved session produces a usable status, not a tool error', async
   } finally { await client.close(); await host.close(); }
 });
 
+test('a missing upload file is not reported as a missing login session', async () => {
+  const { client, backend, close } = await setup();
+  (backend as any).uploadFile = async () => { throw Object.assign(new Error('ENOENT: local source.tex was not found'), { code: 'ENOENT' }); };
+  try {
+    const result = await client.callTool({ name: 'upload_file', arguments: { projectId, localPath: '/missing/source.tex' } });
+    assert.equal(result.isError, true);
+    const message = (result.content as any[])[0].text;
+    assert.match(message, /source\.tex/);
+    assert.doesNotMatch(message, /saved session/);
+  } finally { await close(); }
+});
+
 test('a replacement file with the same version still wakes a pending wait', async () => {
   const { client, backend, close } = await setup();
   try {
