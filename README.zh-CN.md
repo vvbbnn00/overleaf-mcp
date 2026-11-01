@@ -25,25 +25,27 @@
 
 需要准备：
 
-- Node.js **22 或更新版本**以及 npm。
+- Node.js **22 或更新版本**、npm 和 Git。
 - 本机已安装 Google Chrome。
 - 一个有权访问目标项目的 Overleaf 账号。
 - 仅本地编译需要：`latexmk` 和对应 TeX 引擎，可由 MacTeX 或 TeX Live 提供。
 
-在仓库目录中运行：
+### 直接从 GitHub 运行
+
+使用 `npx` 自动下载、构建并运行服务，无需手动克隆仓库：
 
 ```sh
-npm ci
-npm run build
-npm run login
+npx --yes git+https://github.com/vvbbnn00/overleaf-mcp.git login
 ```
+
+Git 安装需要 npm 运行本包的构建脚本，这条路径已用 npm 10 测试。如果你的 npm 版本或策略阻止依赖构建脚本，请使用下方的源码安装方式。
 
 在打开的浏览器窗口中手动登录，并完成必要的验证。程序不会读取或提交密码。终端显示 `Login confirmed` 后，可以按 `Ctrl+C` 结束登录命令，保存的会话仍可继续使用。
 
 检查已保存的会话：
 
 ```sh
-npm run dev -- status
+npx --yes git+https://github.com/vvbbnn00/overleaf-mcp.git status
 ```
 
 ### 接入 MCP 客户端
@@ -54,19 +56,30 @@ npm run dev -- status
 {
   "mcpServers": {
     "overleaf": {
-      "command": "node",
-      "args": ["/absolute/path/to/overleaf-mcp/dist/cli.js", "serve"],
-      "env": {
-        "OVERLEAF_STATE_DIR": "/absolute/path/to/overleaf-mcp/.overleaf-mcp"
-      }
+      "command": "npx",
+      "args": ["--yes", "git+https://github.com/vvbbnn00/overleaf-mcp.git", "serve"]
     }
   }
 }
 ```
 
-将两处仓库路径替换为实际位置。会话目录必须与登录时使用的目录一致。如果客户端找不到 `node`，请填写 Node 可执行文件的完整路径。其他客户端的配置格式可能不同。
+登录命令与服务默认共用 `~/.overleaf-mcp`，不受工作目录影响。如果客户端找不到 `npx`，请填写它的完整路径，并确保客户端的 `PATH` 中可以找到 Node。其他客户端的配置格式可能不同。
 
 MCP 客户端会启动服务，并通过 stdio 与它通信，不需要打开 HTTP 端口或网页控制台。
+
+### 从源码安装
+
+开发或需要固定的本地安装时，可以运行：
+
+```sh
+git clone https://github.com/vvbbnn00/overleaf-mcp.git
+cd overleaf-mcp
+npm ci
+npm run build
+npm run login
+```
+
+采用此方式时，将 MCP 命令设为 `node`，参数设为 `["/absolute/path/to/overleaf-mcp/dist/cli.js", "serve"]`，并替换为仓库的实际路径。可用 `npm run dev -- status` 检查会话。
 
 ## 使用方式
 
@@ -167,10 +180,12 @@ PDF、日志和下载文件会作为 MCP 资源及本地文件路径返回，能
 | 环境变量 | 默认值 | 用途 |
 |---|---|---|
 | `OVERLEAF_BASE_URL` | `https://www.overleaf.com` | 要连接的 Overleaf 实例 |
-| `OVERLEAF_STATE_DIR` | 工作目录中的 `.overleaf-mcp` | 保存会话、下载文件和本地构建文件 |
+| `OVERLEAF_STATE_DIR` | 用户主目录中的 `~/.overleaf-mcp` | 保存会话、下载文件和本地构建文件 |
 | `OVERLEAF_BROWSER_CHANNEL` | `chrome` | 传给 Playwright 的浏览器 channel |
 
 不同账号或实例应使用独立的会话目录。自部署兼容性尚未验收。
+
+早期版本将会话保存在仓库内的 `.overleaf-mcp` 目录中。要复用已有会话，请在终端和 MCP 客户端配置中，将 `OVERLEAF_STATE_DIR` 设为该目录的绝对路径。程序不会自动迁移已有会话。
 
 会话目录包含登录 Cookie 和项目文件，应保持私有并排除在版本控制之外。POSIX 系统中，目录权限为 `0700`，会话文件权限为 `0600`。Cookie 保存在本地，没有应用层加密。
 

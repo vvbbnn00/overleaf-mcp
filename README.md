@@ -25,25 +25,27 @@ You can use a free Overleaf account. Account permissions, project permissions an
 
 You need:
 
-- Node.js **22 or newer** and npm.
+- Node.js **22 or newer**, npm and Git.
 - Google Chrome installed locally.
 - An Overleaf account with access to the projects you want to use.
 - For local compilation only: `latexmk` and the selected TeX engine. MacTeX or TeX Live can provide them.
 
-From the repository directory, run:
+### Run directly from GitHub
+
+Use `npx` to download, build and run the server without a manual clone:
 
 ```sh
-npm ci
-npm run build
-npm run login
+npx --yes git+https://github.com/vvbbnn00/overleaf-mcp.git login
 ```
+
+The Git install needs npm to run the package's build script. This path has been tested with npm 10. If your npm version or policy blocks dependency build scripts, use the source installation below.
 
 Sign in manually in the browser window and complete any verification steps. The program does not read or submit your password. Once the terminal shows `Login confirmed`, press `Ctrl+C` to finish the login command; your saved session remains available.
 
 Check the saved session:
 
 ```sh
-npm run dev -- status
+npx --yes git+https://github.com/vvbbnn00/overleaf-mcp.git status
 ```
 
 ### Connect your MCP client
@@ -54,19 +56,30 @@ For clients that use a `mcpServers` configuration, add:
 {
   "mcpServers": {
     "overleaf": {
-      "command": "node",
-      "args": ["/absolute/path/to/overleaf-mcp/dist/cli.js", "serve"],
-      "env": {
-        "OVERLEAF_STATE_DIR": "/absolute/path/to/overleaf-mcp/.overleaf-mcp"
-      }
+      "command": "npx",
+      "args": ["--yes", "git+https://github.com/vvbbnn00/overleaf-mcp.git", "serve"]
     }
   }
 }
 ```
 
-Replace both repository paths with your actual location. The state directory must match the one used for login. If your client cannot find `node`, use the full path to the Node executable. Other clients may use a different configuration format.
+Login and the server share `~/.overleaf-mcp` by default, regardless of the working directory. If your client cannot find `npx`, use its full path and make sure Node is on the client's `PATH`. Other clients may use a different configuration format.
 
 Your MCP client starts the server. It communicates over stdio; there is no HTTP port or web dashboard to open.
+
+### Install from source
+
+For development or a fixed local installation:
+
+```sh
+git clone https://github.com/vvbbnn00/overleaf-mcp.git
+cd overleaf-mcp
+npm ci
+npm run build
+npm run login
+```
+
+For this installation, set the MCP command to `node` and its arguments to `["/absolute/path/to/overleaf-mcp/dist/cli.js", "serve"]`, using your checkout's actual path. Check the session with `npm run dev -- status`.
 
 ## Using it
 
@@ -167,10 +180,12 @@ History version numbers differ from a text file's `version`. Use versions return
 | Environment variable | Default | Purpose |
 |---|---|---|
 | `OVERLEAF_BASE_URL` | `https://www.overleaf.com` | Overleaf instance to connect to |
-| `OVERLEAF_STATE_DIR` | `.overleaf-mcp` in the working directory | Session, downloads and local build files |
+| `OVERLEAF_STATE_DIR` | `~/.overleaf-mcp` in your home directory | Session, downloads and local build files |
 | `OVERLEAF_BROWSER_CHANNEL` | `chrome` | Browser channel passed to Playwright |
 
 Use separate state directories for different accounts or instances. Self-hosted compatibility is not yet validated.
+
+Earlier checkouts saved sessions in the repository's `.overleaf-mcp` directory. To reuse one, set `OVERLEAF_STATE_DIR` to that directory's absolute path in both your shell and MCP client configuration. Existing sessions are not moved automatically.
 
 The state directory contains login cookies and project files. Keep it private and out of version control. On POSIX systems, the directory uses mode `0700` and the session file uses `0600`. Cookies are stored locally without application-level encryption.
 
