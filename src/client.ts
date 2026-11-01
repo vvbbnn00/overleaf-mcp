@@ -110,7 +110,7 @@ export class OverleafClient extends EventEmitter {
       this.authenticationLost = true;
       throw new AuthenticationError('Authentication required. Run overleaf-mcp login (or npm run login from the source checkout).');
     }
-    if (!result.ok) throw new Error(`Overleaf returned HTTP ${result.status}`);
+    if (!result.ok) throw Object.assign(new Error(`Overleaf returned HTTP ${result.status}`), { status: result.status });
     if (!result.isJson && result.status !== 204) throw new Error('Overleaf did not return JSON; retry or check the service status.');
     await saveSession(this.context);
     return result.data;
@@ -495,6 +495,28 @@ export class OverleafClient extends EventEmitter {
       } catch (error) { unavailable.push({ path: doc.path, error: safeErrorMessage(error) }); }
     }
     return { projectId, threads: await this.request(`/project/${projectId}/threads`), files, unavailable, complete: unavailable.length === 0, observedAt: new Date().toISOString() };
+  }
+
+  async replyToComment(projectId: string, threadId: string, content: string) {
+    if (!/^[a-f\d]{24}$/i.test(projectId)) throw new Error('Invalid project ID');
+    if (!/^[a-f\d]{24}$/i.test(threadId)) throw new Error('Invalid comment thread ID');
+    if (!content.trim()) throw new Error('Reply content must not be empty');
+    const threadsPath = `/project/${projectId}/threads`;
+    const threads = await this.request(threadsPath);
+    // The POST endpoint can also create threads; a reply must target an existing one.
+    if (!threads[threadId]) throw new Error('Comment thread not found. Check get_review to find an existing thread.');
+    try {
+      await this.request(`/project/${projectId}/thread/${threadId}/messages`, 'POST', { content });
+    } catch (error: any) {
+      if (error instanceof AuthenticationError || (error.status >= 400 && error.status < 500)) throw error;
+      throw new Error(`REPLY_STATUS_UNKNOWN: ${safeErrorMessage(error)}; check get_review before retrying`);
+    }
+    const posted = { projectId, threadId, posted: true };
+    try {
+      return { ...posted, thread: (await this.request(threadsPath))[threadId] ?? null };
+    } catch (error) {
+      return { ...posted, thread: null, readBackError: safeErrorMessage(error) };
+    }
   }
 
   async history(projectId: string, before?: string) {
