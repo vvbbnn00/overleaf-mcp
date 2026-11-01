@@ -6,7 +6,10 @@ import { createHash } from 'node:crypto';
 const projectId = process.argv[2];
 const path = process.argv[3] ?? 'main.tex';
 if (!projectId) throw new Error('Usage: node scripts/smoke.mjs <project-id> [file]');
-const transport = new StdioClientTransport({ command: process.execPath, args: ['dist/cli.js', 'serve'], cwd: process.cwd(), stderr: 'inherit' });
+const transport = new StdioClientTransport({
+  command: process.execPath, args: ['dist/cli.js', 'serve'], cwd: process.cwd(), stderr: 'inherit',
+  env: Object.fromEntries(Object.entries(process.env).filter(([key, value]) => key.startsWith('OVERLEAF_') && value !== undefined)),
+});
 const client = new Client({ name: 'overleaf-mcp-acceptance', version: '0.1.0' });
 try {
   await client.connect(transport);

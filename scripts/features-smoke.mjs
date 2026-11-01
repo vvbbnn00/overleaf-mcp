@@ -5,7 +5,10 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { OverleafClient } from '../dist/client.js';
 
 const projectId = process.argv[2];
-const transport = new StdioClientTransport({ command: process.execPath, args: ['dist/cli.js', 'serve'], cwd: process.cwd(), stderr: 'inherit' });
+const transport = new StdioClientTransport({
+  command: process.execPath, args: ['dist/cli.js', 'serve'], cwd: process.cwd(), stderr: 'inherit',
+  env: Object.fromEntries(Object.entries(process.env).filter(([key, value]) => key.startsWith('OVERLEAF_') && value !== undefined)),
+});
 const client = new Client({ name: 'overleaf-feature-acceptance', version: '1' });
 const call = async (name, args = {}) => {
   const result = await client.callTool({ name, arguments: args });

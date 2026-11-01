@@ -32,13 +32,13 @@ export class OverleafClient extends EventEmitter {
     const { browser, context } = await authenticatedContext();
     try {
       const initial = await probeSession(context);
-      if (initial.authenticated === false) throw new AuthenticationError('Authentication required. Run npm run login.');
+      if (initial.authenticated === false) throw new AuthenticationError('Authentication required. Run overleaf-mcp login (or npm run login from the source checkout).');
       if (initial.authenticated === null) throw new Error(`Session check unavailable (HTTP ${initial.status}); retry without logging in again.`);
       const page = await context.newPage();
       await page.route('**/*', route => route.request().resourceType() === 'script' ? route.abort() : route.continue());
       await page.goto(`${baseUrl}/project`, { waitUntil: 'domcontentloaded' });
       if (!await page.locator('meta[name="ol-user_id"]').getAttribute('content').catch(() => null)) {
-        throw new AuthenticationError('Authentication required. Run npm run login and sign in in the browser.');
+        throw new AuthenticationError('Authentication required. Run overleaf-mcp login (or npm run login from the source checkout) and sign in in the browser.');
       }
       const client = new OverleafClient(browser, context, page);
       client.rollingObserved = initial.cookies.some(c => c.expiryAdvancedSeconds > 1);
@@ -58,7 +58,7 @@ export class OverleafClient extends EventEmitter {
     if (state.authenticated === false) {
       this.authenticationLost = true;
       for (const watch of this.watches.values()) {
-        watch.current = { projectId: watch.projectId, path: watch.path, live: false, error: 'Authentication required. Run npm run login.' };
+        watch.current = { projectId: watch.projectId, path: watch.path, live: false, error: 'Authentication required. Run overleaf-mcp login (or npm run login from the source checkout).' };
         this.emit('change', watch.current);
       }
     }
@@ -94,7 +94,7 @@ export class OverleafClient extends EventEmitter {
 
   async request(path: string, method = 'GET', body?: unknown, timeoutMs = 30000) {
     if (this.closed) throw new Error('Overleaf client is closed');
-    if (this.authenticationLost) throw new AuthenticationError('Authentication required. Run npm run login.');
+    if (this.authenticationLost) throw new AuthenticationError('Authentication required. Run overleaf-mcp login (or npm run login from the source checkout).');
     const result = await this.dashboard.evaluate(async ({ path, method, body, baseUrl, timeoutMs }) => {
       const csrf = document.querySelector('meta[name="ol-csrfToken"]')?.getAttribute('content') ?? '';
       const response = await fetch(baseUrl + path, {
@@ -108,7 +108,7 @@ export class OverleafClient extends EventEmitter {
     }, { path, method, body, baseUrl, timeoutMs });
     if (result.loginRequired) {
       this.authenticationLost = true;
-      throw new AuthenticationError('Authentication required. Run npm run login.');
+      throw new AuthenticationError('Authentication required. Run overleaf-mcp login (or npm run login from the source checkout).');
     }
     if (!result.ok) throw new Error(`Overleaf returned HTTP ${result.status}`);
     if (!result.isJson && result.status !== 204) throw new Error('Overleaf did not return JSON; retry or check the service status.');
@@ -210,7 +210,7 @@ export class OverleafClient extends EventEmitter {
 
   private async project(projectId: string): Promise<ProjectConnection> {
     if (this.closed) throw new Error('Overleaf client is closed');
-    if (this.authenticationLost) throw new AuthenticationError('Authentication required. Run npm run login.');
+    if (this.authenticationLost) throw new AuthenticationError('Authentication required. Run overleaf-mcp login (or npm run login from the source checkout).');
     if (!/^[a-f\d]{24}$/i.test(projectId)) throw new Error('Invalid project ID');
     let pending = this.projects.get(projectId);
     if (!pending) {
@@ -429,7 +429,7 @@ export class OverleafClient extends EventEmitter {
 
   async watchFile(projectId: string, path: string) {
     if (this.closed) throw new Error('Overleaf client is closed');
-    if (this.authenticationLost) throw new AuthenticationError('Authentication required. Run npm run login.');
+    if (this.authenticationLost) throw new AuthenticationError('Authentication required. Run overleaf-mcp login (or npm run login from the source checkout).');
     const key = `${projectId}:${path}`;
     let watch = this.watches.get(key);
     if (!watch) {

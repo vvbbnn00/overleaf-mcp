@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { browserLogin, inspectSavedSession } from './session.js';
 import { OverleafClient } from './client.js';
 import { serve } from './mcp.js';
@@ -5,6 +6,11 @@ import { safeErrorMessage } from './errors.js';
 
 async function main() {
   const command = process.argv[2];
+  const usage = 'Usage: overleaf-mcp <command>\nCommands: login | status | serve | list | project <id> | read/watch <id> <path> | history <id>';
+  if (!command || command === '--help' || command === '-h') {
+    console.log(usage);
+    return;
+  }
   if (command === 'serve') return serve();
   if (command === 'login') return browserLogin();
   if (command === 'status') {
@@ -28,7 +34,7 @@ async function main() {
     } finally { await client.close(); }
     return;
   }
-  throw new Error('Usage: login | status | list | project <id> | read/watch <id> <path> | history <id>');
+  throw new Error(usage);
 }
 
 main().catch(error => { console.error(safeErrorMessage(error)); process.exitCode = 1; });

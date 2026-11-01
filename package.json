@@ -3,12 +3,38 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
+  "author": "vvbbnn00",
   "type": "module",
-  "description": "Local MCP server for Overleaf projects, live editing, file transfer and compilation",
+  "description": "Unofficial MCP server for Overleaf: live LaTeX editing, file uploads and downloads, project history, review comments, and PDF compilation.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vvbbnn00/overleaf-mcp.git"
+  },
+  "keywords": [
+    "overleaf",
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "latex",
+    "tex",
+    "typescript",
+    "pdf",
+    "collaboration"
+  ],
+  "bin": {
+    "overleaf-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
+    "prepare": "npm run build",
     "login": "npm run build --silent && node dist/cli.js login",
     "start": "node dist/cli.js serve",
     "dev": "npm run build --silent && node dist/cli.js",

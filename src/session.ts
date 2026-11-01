@@ -1,10 +1,11 @@
 import { chromium, type Browser, type BrowserContext } from 'playwright';
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { safeErrorMessage } from './errors.js';
 
 export const baseUrl = (process.env.OVERLEAF_BASE_URL ?? 'https://www.overleaf.com').replace(/\/$/, '');
-export const stateDir = resolve(process.env.OVERLEAF_STATE_DIR ?? '.overleaf-mcp');
+export const stateDir = resolve(process.env.OVERLEAF_STATE_DIR ?? resolve(homedir(), '.overleaf-mcp'));
 export const authPath = resolve(stateDir, 'session.json');
 
 export class AuthenticationError extends Error {}

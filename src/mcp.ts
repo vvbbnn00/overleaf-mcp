@@ -74,7 +74,7 @@ export function createMcpServer(connect = () => OverleafClient.connect()) {
       return respond(value);
     } catch (error: any) {
       if (error instanceof AuthenticationError) await resetClient(connection);
-      return { isError: true, content: [{ type: 'text' as const, text: !connected && error.code === 'ENOENT' ? 'No saved session. Run npm run login.' : safeErrorMessage(error) }] };
+      return { isError: true, content: [{ type: 'text' as const, text: !connected && error.code === 'ENOENT' ? 'No saved session. Run overleaf-mcp login (or npm run login from the source checkout).' : safeErrorMessage(error) }] };
     }
   };
   const annotations = { readOnlyHint: true, destructiveHint: false, openWorldHint: true };

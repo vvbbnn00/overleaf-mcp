@@ -6,7 +6,10 @@ import { createHash } from 'node:crypto';
 
 const [projectId, path = 'main.tex'] = process.argv.slice(2);
 if (!projectId) throw new Error('Usage: node scripts/collaboration-mcp.mjs <project-id> [file]');
-const transport = new StdioClientTransport({ command: process.execPath, args: ['dist/cli.js', 'serve'], cwd: process.cwd(), stderr: 'inherit' });
+const transport = new StdioClientTransport({
+  command: process.execPath, args: ['dist/cli.js', 'serve'], cwd: process.cwd(), stderr: 'inherit',
+  env: Object.fromEntries(Object.entries(process.env).filter(([key, value]) => key.startsWith('OVERLEAF_') && value !== undefined)),
+});
 const client = new Client({ name: 'overleaf-collaboration-acceptance', version: '0.1.0' });
 const call = async (name, args = { projectId }) => {
   const value = await client.callTool({ name, arguments: args });

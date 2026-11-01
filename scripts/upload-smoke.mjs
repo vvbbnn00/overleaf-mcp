@@ -34,7 +34,10 @@ const projectId = process.argv[2];
 const directory = await mkdtemp(join(tmpdir(), 'overleaf-upload-smoke-'));
 const backend = await OverleafClient.connect();
 const client = new Client({ name: 'upload-acceptance', version: '1' });
-const transport = new StdioClientTransport({ command: process.execPath, args: ['dist/cli.js', 'serve'], cwd: process.cwd(), stderr: 'inherit' });
+const transport = new StdioClientTransport({
+  command: process.execPath, args: ['dist/cli.js', 'serve'], cwd: process.cwd(), stderr: 'inherit',
+  env: Object.fromEntries(Object.entries(process.env).filter(([key, value]) => key.startsWith('OVERLEAF_') && value !== undefined)),
+});
 let folderId;
 try {
   assert.equal((await backend.getProject(projectId)).name, 'TestForMCP');
