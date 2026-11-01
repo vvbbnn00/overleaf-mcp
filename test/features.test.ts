@@ -8,32 +8,47 @@ import { compileProject } from '../src/compile.js';
 import { OverleafClient } from '../src/client.js';
 
 test('modern writes preserve Unicode while legacy inserts and ambiguous replacements are rejected', () => {
-  const before = 'ab😀c';
-  const [operation] = textEditOperation(before, 'ab中c', 'history-ot') as { textOperation: (string | number)[] }[];
-  let cursor = 0, output = '';
-  for (const component of operation.textOperation) {
-    if (typeof component === 'string') output += component;
-    else if (component > 0) { output += before.slice(cursor, cursor + component); cursor += component; }
-    else cursor -= component;
+  for (const after of ['ab中c', 'ab😁c']) {
+    const before = 'ab😀c';
+    const [operation] = textEditOperation(before, after, 'history-ot') as { textOperation: (string | number)[] }[];
+    let cursor = 0, output = '';
+    for (const component of operation.textOperation) {
+      if (typeof component === 'string') output += component;
+      else if (component > 0) { output += before.slice(cursor, cursor + component); cursor += component; }
+      else cursor -= component;
+    }
+    assert.equal(cursor, before.length);
+    assert.equal(output, after);
   }
-  assert.equal(cursor, before.length);
-  assert.equal(output, 'ab中c');
   assert.throws(() => textEditOperation('', '😀', 'sharejs-text-ot'), /UNSUPPORTED_CHARACTER/);
   assert.equal(replaceExact('a\n中文\nz', '中文', '新内容'), 'a\n新内容\nz');
   assert.throws(() => replaceExact('aaa', 'aa', 'b'), /more than once/);
 });
 
-test('separate text edits do not delete the unchanged middle and its comment anchors', () => {
-  const before = 'left old\nKEEP_COMMENT_ANCHOR\nright old';
-  const after = 'left new\nKEEP_COMMENT_ANCHOR\nright new';
-  const ops = textEditOperation(before, after, 'sharejs-text-ot') as any[];
-  assert.ok(ops.every(op => !op.d?.includes('KEEP_COMMENT_ANCHOR')));
-  let actual = before;
-  for (const op of ops) {
-    if ('d' in op) { assert.equal(actual.slice(op.p, op.p + op.d.length), op.d); actual = actual.slice(0, op.p) + actual.slice(op.p + op.d.length); }
-    else actual = actual.slice(0, op.p) + op.i + actual.slice(op.p);
+test('file writeback retains the original characters of unchanged annotated passages', () => {
+  for (const [before, after, quote] of [
+    ['left old\nKEEP_COMMENT_ANCHOR\nright old', 'left new\nKEEP_COMMENT_ANCHOR\nright new', 'KEEP_COMMENT_ANCHOR'],
+    ['foo bar foo tail', 'bar foo foo tail', 'foo tail'],
+    ['foo bar foo tail\nEND old', 'bar foo foo tail\nEND new', 'foo tail'],
+    ['foo bar foo tail\n\nEND old', 'bar foo foo tail\n\nEND new', 'foo tail'],
+  ]) {
+    const ids: (number | null)[] = Array.from({ length: before.length }, (_, i) => i);
+    const originalStart = before.indexOf(quote);
+    let actual = before;
+    for (const op of textEditOperation(before, after, 'sharejs-text-ot') as any[]) {
+      if ('d' in op) {
+        assert.equal(actual.slice(op.p, op.p + op.d.length), op.d);
+        actual = actual.slice(0, op.p) + actual.slice(op.p + op.d.length);
+        ids.splice(op.p, op.d.length);
+      } else {
+        actual = actual.slice(0, op.p) + op.i + actual.slice(op.p);
+        ids.splice(op.p, 0, ...Array(op.i.length).fill(null));
+      }
+    }
+    assert.equal(actual, after);
+    const start = after.indexOf(quote);
+    assert.deepEqual(ids.slice(start, start + quote.length), Array.from({ length: quote.length }, (_, i) => originalStart + i));
   }
-  assert.equal(actual, after);
 });
 
 test('an already canceled compile does not start network or compiler work', async () => {
@@ -98,13 +113,15 @@ test('an uncertain write cannot be followed by another write on the same connect
   assert.equal(submissions, 1);
 });
 
-test('legacy review writes recheck resolved change IDs even when the text version stays the same', async () => {
+test('legacy review writes recheck change and comment IDs when the text version stays the same', async () => {
   let submissions = 0;
   (globalThis as any).window = { __overleafMcp: {
     connected: true, publicId: 'reader', generation: 1,
     rpc: async (event: string) => event === 'joinDoc' ? [[], 4, [], { changes: [] }, 'sharejs-text-ot'] : (++submissions, []),
   } };
-  await assert.rejects(submitDocumentEdit({ docId: 'doc', version: 4, type: 'sharejs-text-ot', op: [{ p: 0, d: 'accepted' }], expectedChangeIds: ['already-accepted'] }), /VERSION_CONFLICT/);
+  for (const expected of [{ expectedChangeIds: ['already-accepted'] }, { expectedCommentIds: ['deleted-thread'] }]) {
+    await assert.rejects(submitDocumentEdit({ docId: 'doc', version: 4, type: 'sharejs-text-ot', op: [{ p: 0, d: 'accepted' }], ...expected }), /VERSION_CONFLICT/);
+  }
   assert.equal(submissions, 0);
 });
 

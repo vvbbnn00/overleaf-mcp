@@ -74,14 +74,40 @@ test('a line range past EOF is rejected instead of returning inverted bounds', (
 
 test('write verification does not report success for a replacement document at the same path', async () => {
   const client = reader() as any;
-  let reads = 0;
-  client.readFile = async () => ++reads === 1
-    ? { ...snapshot, docId: 'original', content: 'old', type: 'sharejs-text-ot' }
-    : { ...snapshot, docId: 'replacement', version: 2, content: 'new', type: 'sharejs-text-ot' };
-  client.project = async () => ({ page: { evaluate: async () => ({ acceptedVersion: 2, concurrentChanges: false }) } });
+  client.reviewSnapshot = async () => ({
+    snapshot: { ...snapshot, docId: 'original', content: 'old', type: 'sharejs-text-ot' },
+    page: { evaluate: async () => ({ acceptedVersion: 2, concurrentChanges: false }) },
+  });
+  client.readFile = async () => ({ ...snapshot, docId: 'replacement', version: 2, content: 'new', type: 'sharejs-text-ot' });
   const result = await client.writeFile(projectId, path, 'original', 1, { content: 'new' });
   assert.equal(result.applied, true);
   assert.equal(result.verified, false);
+  await client.close();
+});
+
+test('exact replacements keep text edits within the selected passage even when adjacent characters repeat', async () => {
+  const client = reader() as any;
+  let submitted: any[] = [];
+  client.reviewSnapshot = async () => ({
+    snapshot: { ...snapshot, content: 'baaa end', type: 'sharejs-text-ot', ranges: { comments: [{ id: 'thread', op: { p: 2, c: 'aa end' } }] } },
+    page: { evaluate: async (_run: unknown, input: any) => { submitted = input.op; return { acceptedVersion: 2, concurrentChanges: false }; } },
+  });
+  client.readFile = async () => ({ ...snapshot, version: 2, content: 'baaaa end' });
+  await client.writeFile(projectId, path, 'doc', 1, { oldText: 'ba', newText: 'baa' });
+  let text = 'baaa end', boundary = 2;
+  for (const op of submitted) {
+    if ('d' in op) {
+      assert.ok(op.p + op.d.length <= boundary);
+      text = text.slice(0, op.p) + text.slice(op.p + op.d.length);
+      boundary -= op.d.length;
+    } else if ('i' in op) {
+      assert.ok(op.p <= boundary);
+      text = text.slice(0, op.p) + op.i + text.slice(op.p);
+      boundary += op.i.length;
+    }
+  }
+  assert.equal(text, 'baaaa end');
+  assert.equal(boundary, 3);
   await client.close();
 });
 

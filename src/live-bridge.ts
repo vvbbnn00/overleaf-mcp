@@ -163,7 +163,7 @@ export async function readLivePresence() {
   return { status: 'available', users: [...users.values()], observedAt: new Date().toISOString() };
 }
 
-export async function submitDocumentEdit(input: { docId: string; version: number; type: string; op: unknown[]; expectedChangeIds?: string[] }) {
+export async function submitDocumentEdit(input: { docId: string; version: number; type: string; op: unknown[]; expectedChangeIds?: string[]; expectedCommentIds?: string[] }) {
   const bridge = (window as any).__overleafMcp;
   if (!bridge?.connected || !bridge.publicId) throw new Error('Realtime connection is unavailable for writing');
   bridge.uncertainWrites ??= new Set<string>();
@@ -174,6 +174,9 @@ export async function submitDocumentEdit(input: { docId: string; version: number
   if (version !== input.version || type !== input.type) throw new Error('VERSION_CONFLICT: file changed before write; read it again');
   if (input.expectedChangeIds?.some(id => !ranges?.changes?.some((change: any) => change.id === id))) {
     throw new Error("VERSION_CONFLICT: refresh get_review to select current tracked changes.");
+  }
+  if (input.expectedCommentIds?.some(id => !ranges?.comments?.some((comment: any) => comment.id === id))) {
+    throw new Error("VERSION_CONFLICT: Refresh `get_review` to load current comment ranges.");
   }
   return new Promise<{ acceptedVersion: number; concurrentChanges: boolean }>((resolve, reject) => {
     let settled = false;

@@ -1,4 +1,4 @@
-import { textEditOperation } from './model.js';
+import { validateInsertedText, type TextEdit } from './model.js';
 
 const decodeLegacy = (text: string) => new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(text, c => c.charCodeAt(0)));
 const modernChangeId = (change: any) => `change-${change.tracking.type}-${change.range.pos}`;
@@ -37,10 +37,59 @@ export function commentOperation(snapshot: any, quote: string, threadId: string)
   const start = snapshot.content.indexOf(quote);
   if (!quote || start < 0) throw new Error("Select text from a fresh read_file result.");
   if (snapshot.content.indexOf(quote, start + 1) >= 0) throw new Error("Include more surrounding text to select a unique passage.");
-  textEditOperation('', quote, snapshot.type);
+  validateInsertedText(quote, snapshot.type);
   return snapshot.type === 'history-ot'
     ? [{ commentId: threadId, ranges: [{ pos: start, length: quote.length }] }]
     : [{ p: start, c: quote, t: threadId }];
+}
+
+export function commentRangeOperations(snapshot: any, plan: { edits: TextEdit[]; replacements: TextEdit[] }, after: string) {
+  const modern = snapshot.type === 'history-ot';
+  const comments = modern ? snapshot.reviewComments ?? [] : (snapshot.ranges?.comments ?? []).map((comment: any) => ({
+    id: comment.id, ranges: [{ pos: comment.op.p, length: decodeLegacy(comment.op.c ?? '').length }],
+  }));
+  const operations: unknown[] = [];
+  for (const comment of comments) {
+    const ranges = comment.ranges.map((range: any) => ({ start: range.pos, end: range.pos + range.length }));
+    let update = false;
+    for (const range of ranges) {
+      const regions = plan.replacements.filter(edit => range.start <= edit.start && range.end >= edit.end);
+      let shift = 0, previousRegion: TextEdit | undefined;
+      for (const part of plan.edits) {
+        const region = regions.find(edit => part.start >= edit.start && part.end <= edit.end);
+        if (region && region === previousRegion) continue;
+        previousRegion = region;
+        const edit = region ?? part;
+        const from = edit.start + shift, to = edit.end + shift, inserted = edit.text.length;
+        const delta = inserted - (to - from);
+        if (from === to) {
+          if (from <= range.start) { range.start += inserted; range.end += inserted; }
+          else if (from < range.end) { range.end += inserted; update ||= modern && inserted > 0; }
+        } else if (to <= range.start) {
+          range.start += delta; range.end += delta;
+        } else if (from < range.end) {
+          if (range.start === range.end) { range.start = range.end = from + inserted; }
+          else {
+            const replacesBoundary = range.start >= from || range.end <= to;
+            range.start = Math.min(range.start, from);
+            range.end = range.end > to ? range.end + delta : from + inserted;
+            update ||= inserted > 0 && (modern || replacesBoundary);
+          }
+        }
+        shift += delta;
+      }
+    }
+    if (!update) continue;
+    if (modern) {
+      operations.push({ commentId: comment.id, ranges: ranges.filter((range: any) => range.end > range.start).map((range: any) => ({ pos: range.start, length: range.end - range.start })), resolved: comment.resolved ?? false });
+    } else {
+      const range = ranges[0];
+      const text = after.slice(range.start, range.end);
+      validateInsertedText(text, snapshot.type);
+      operations.push({ p: range.start, c: text, t: comment.id });
+    }
+  }
+  return operations;
 }
 
 export function trackedChangePlan(snapshot: any, changeIds: string[], action: 'accept' | 'reject') {
@@ -64,7 +113,7 @@ export function trackedChangePlan(snapshot: any, changeIds: string[], action: 'a
         expectedContent = expectedContent.slice(0, p) + expectedContent.slice(p + text.length);
       } else {
         // Use the same Unicode checks as ordinary source edits.
-        textEditOperation('', text, snapshot.type);
+        validateInsertedText(text, snapshot.type);
         op.push({ p, i: text, u: true });
         expectedContent = expectedContent.slice(0, p) + text + expectedContent.slice(p);
       }

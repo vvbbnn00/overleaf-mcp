@@ -5,7 +5,8 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { OverleafClient } from '../src/client.js';
 import { createMcpServer } from '../src/mcp.js';
 import { AuthenticationError } from '../src/session.js';
-import { commentOperation, documentReview, trackedChangePlan } from '../src/review.js';
+import { commentOperation, commentRangeOperations, documentReview, trackedChangePlan } from '../src/review.js';
+import { textEditPlan } from '../src/model.js';
 
 const projectId = '0123456789abcdef01234567';
 const threadId = 'aaaaaaaaaaaaaaaaaaaaaaaa';
@@ -132,6 +133,40 @@ test('modern review decisions preserve other tracked ranges and use snapshot Uni
     assert.equal(resultMarks.filter(mark => mark === 'selected').length, 0);
   }
   assert.deepEqual(commentOperation(snapshot, 'KEEP', threadId), [{ commentId: threadId, ranges: [{ pos: 8, length: 4 }] }]);
+});
+
+test('replacing an annotated word keeps its thread attached to the revised word', () => {
+  const before = 'The cat sat.', after = 'The kitten sat.';
+  for (const type of ['sharejs-text-ot', 'history-ot']) {
+    const snapshot = { type, content: before,
+      ranges: { comments: [{ id: threadId, op: { p: 4, c: 'cat' } }] },
+      reviewComments: [{ id: threadId, resolved: true, ranges: [{ pos: 4, length: 3 }] }],
+    };
+    const plan = textEditPlan(before, after, type);
+    const updates = commentRangeOperations(snapshot, plan, after) as any[];
+    assert.equal(updates.length, 1);
+    if (type === 'history-ot') {
+      assert.equal(updates[0].commentId, threadId);
+      assert.equal(updates[0].resolved, true);
+      assert.deepEqual(updates[0].ranges, [{ pos: 4, length: 6 }]);
+    } else {
+      assert.equal(updates[0].t, threadId);
+      assert.equal(updates[0].p, 4);
+      assert.equal(updates[0].c, 'kitten');
+    }
+  }
+});
+
+test('modern annotations include text inserted inside the passage and preserve separate ranges', () => {
+  const snapshot = { type: 'history-ot', content: '😀 cat AND tail', reviewComments: [
+    { id: threadId, resolved: false, ranges: [{ pos: 3, length: 3 }, { pos: 11, length: 4 }] },
+  ] };
+  const after = '😀 calm cat AND tail';
+  const plan = textEditPlan(snapshot.content, after, snapshot.type);
+  const updates = commentRangeOperations(snapshot, plan, after) as any[];
+  assert.deepEqual(updates[0].ranges, [{ pos: 3, length: 8 }, { pos: 16, length: 4 }]);
+  assert.equal(updates[0].commentId, threadId);
+  assert.equal(updates[0].resolved, false);
 });
 
 function documentBackend() {

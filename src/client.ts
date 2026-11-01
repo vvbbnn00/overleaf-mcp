@@ -2,11 +2,11 @@ import { EventEmitter } from 'node:events';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { authenticatedContext, AuthenticationError, baseUrl, probeSession, saveSession, type SessionStatus } from './session.js';
 import { installLiveBridge, readLiveDocument, readLivePresence, submitDocumentEdit } from './live-bridge.js';
-import { flattenFiles, flattenFolders, renewalDelay, selectLines, textEditOperation, replaceExact, type ProjectFile } from './model.js';
+import { flattenFiles, flattenFolders, renewalDelay, selectLines, textEditPlan, replaceExact, type ProjectFile } from './model.js';
 import { saveArtifact } from './artifacts.js';
 import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { posix } from 'node:path';
-import { commentOperation, documentReview, trackedChangePlan } from './review.js';
+import { commentOperation, commentRangeOperations, documentReview, trackedChangePlan } from './review.js';
 import { loadUpload, uploadDestination, uploadedTextMatches } from './uploads.js';
 import { safeErrorMessage } from './errors.js';
 
@@ -301,13 +301,22 @@ export class OverleafClient extends EventEmitter {
     const key = `${projectId}:${path}`;
     const previous = this.writes.get(key) ?? Promise.resolve();
     const pending = previous.catch(() => {}).then(async () => {
-      const before = await this.readFile(projectId, path);
-      if (before.docId !== expectedDocId || before.version !== expectedVersion) throw new Error('VERSION_CONFLICT: read the file again before writing');
-      const content = 'content' in change ? change.content : replaceExact(before.content, change.oldText, change.newText);
-      const op = textEditOperation(before.content, content, before.type);
+      const { page, snapshot } = await this.reviewSnapshot(projectId, path, expectedDocId, expectedVersion);
+      const { ranges: _ranges, reviewComments: _comments, reviewChanges: _changes, ...source } = snapshot;
+      const before = { projectId, path, ...source, ...selectLines(source.content) };
+      let content: string, scope: { start: number; end: number } | undefined;
+      if ('content' in change) content = change.content;
+      else {
+        content = replaceExact(before.content, change.oldText, change.newText);
+        const start = before.content.indexOf(change.oldText);
+        scope = { start, end: start + change.oldText.length };
+      }
+      const plan = textEditPlan(before.content, content, before.type, scope);
+      const commentOps = commentRangeOperations(snapshot, plan, content);
+      const op = [...plan.op, ...commentOps];
       if (!op.length) return { applied: false, unchanged: true, ...before };
-      const { page } = await this.project(projectId);
-      const acknowledgment = await page.evaluate(submitDocumentEdit, { docId: before.docId, version: before.version, type: before.type, op });
+      const acknowledgment = await page.evaluate(submitDocumentEdit, { docId: before.docId, version: before.version, type: before.type, op,
+        expectedCommentIds: before.type === 'sharejs-text-ot' ? commentOps.map((operation: any) => operation.t) : undefined });
       let after;
       try { after = await this.readFile(projectId, path); }
       catch (error) { return { applied: true, ...acknowledgment, verified: false, error: safeErrorMessage(error), projectId, path }; }

@@ -96,7 +96,7 @@ npm run login
 
 先读取文件，将返回的 `docId` 和 `version` 作为 `expectedDocId`、`expectedVersion` 传给 `write_file` 或 `replace_text`。
 
-`replace_text` 要求 `oldText` 恰好匹配一处。`write_file` 接收期望的完整文本，并保留周围原文。协作者同时进行的修改可能由 Overleaf 合并。
+`replace_text` 将修改限定于 `oldText` 的唯一精确匹配处。`write_file` 先按行比对，再应用局部字符编辑。两者均随正文修改同步更新受影响的批注范围，并保留线程 ID、回复和解决状态。Overleaf 可合并并发编辑。
 
 返回结果分别说明：
 

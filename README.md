@@ -96,7 +96,7 @@ Start with `list_projects` to get a project ID, then `get_project` to see its fi
 
 Read the file first. Pass its returned `docId` and `version` as `expectedDocId` and `expectedVersion` to `write_file` or `replace_text`.
 
-`replace_text` requires a single exact match for `oldText`. `write_file` accepts the full target text and submits edits that retain unchanged regions. Overleaf may merge edits made concurrently by collaborators.
+`replace_text` confines edits to the single exact match of `oldText`. `write_file` compares lines first, then applies localized character edits. Both update affected comment ranges alongside source changes while preserving thread IDs, replies, and resolution status. Overleaf may merge concurrent edits.
 
 The result separates three checks:
 
