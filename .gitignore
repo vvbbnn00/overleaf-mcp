@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.overleaf-mcp/
+output/
+.env
+*.log
