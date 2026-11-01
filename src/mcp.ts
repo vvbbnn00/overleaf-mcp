@@ -36,10 +36,12 @@ export function createMcpServer(connect = () => OverleafClient.connect()) {
         const uri = uriFor(event.projectId, event.path);
         if (subscriptions.has(uri)) void server.server.sendResourceUpdated({ uri }).catch(() => {});
       });
-      for (const uri of new Set([...subscriptions, ...toolWatches])) {
-        const { projectId, path } = parseUri(uri);
-        await client.watchFile(projectId, path);
-      }
+      try {
+        for (const uri of new Set([...subscriptions, ...toolWatches])) {
+          const { projectId, path } = parseUri(uri);
+          await client.watchFile(projectId, path);
+        }
+      } catch (error) { await client.close(); throw error; }
       return client;
     }).catch(error => { pending = undefined; throw error; });
   };

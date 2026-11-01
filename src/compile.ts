@@ -97,7 +97,7 @@ export async function compileProject(client: OverleafClient, options: CompileOpt
   options.signal?.throwIfAborted();
   if (options.mode === 'local') return compileLocal(client, options);
   let remote;
-  try { remote = await client.compileRemote(options.projectId, options.rootPath, options.compiler); }
+  try { remote = await client.compileRemote(options.projectId, options.rootPath, options.compiler, options.timeoutSeconds); }
   catch (error: any) {
     if (options.mode !== 'auto' || !/HTTP (429|5\d\d)|timeout|timed out|NetworkError|Failed to fetch/i.test(error.message)) throw error;
     remote = { mode: 'remote', status: 'service-unavailable', error: safeErrorMessage(error) };

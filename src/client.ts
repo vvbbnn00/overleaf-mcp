@@ -181,14 +181,14 @@ export class OverleafClient extends EventEmitter {
     return { projectId, path, artifact: await saveArtifact(path, bytes, detectedMime) };
   }
 
-  async compileRemote(projectId: string, rootPath?: string, compiler?: string) {
+  async compileRemote(projectId: string, rootPath?: string, compiler?: string, timeoutSeconds = 120) {
     const project = await this.getProject(projectId);
     const root = rootPath ? project.files.find(file => file.path === rootPath && file.kind === 'doc') : project.files.find(file => file.id === project.rootDocId);
     if (!root) throw new Error('Main document not found; provide rootPath');
     const editorId = randomUUID();
     const result = await this.request(`/project/${projectId}/compile?file_line_errors=true`, 'POST', {
       rootDoc_id: root.id, rootResourcePath: root.path, editorId, check: 'silent', stopOnFirstError: true, ...(compiler ? { compiler } : {}),
-    }, 300000);
+    }, timeoutSeconds * 1000);
     const outputs = [];
     for (const file of result.outputFiles ?? []) {
       if (!['output.pdf', 'output.log', 'output.bbl', 'output.blg'].includes(file.path)) continue;
@@ -642,8 +642,8 @@ export class OverleafClient extends EventEmitter {
       try {
         const after = (await this.reviewSnapshot(projectId, path)).snapshot;
         const review = documentReview(path, after);
-        const verified = after.docId === snapshot.docId && (snapshot.type === 'history-ot'
-          ? after.version >= acknowledgment!.acceptedVersion
+        const verified = after.docId === snapshot.docId && (acknowledgment
+          ? after.version >= acknowledgment.acceptedVersion
           : review.trackedChanges.every(change => !changeIds.includes(change.id)));
         return { ...result, verified, matchesRequestedContent: after.content === plan.expectedContent, content: after.content, version: after.version, review };
       } catch (error) { return { ...result, verified: false, readBackError: safeErrorMessage(error) }; }

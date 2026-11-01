@@ -136,3 +136,27 @@ test('a late authentication failure from an old connection does not close the re
     assert.equal(newClosed, 0);
   } finally { await client.close(); await host.close(); }
 });
+
+test('a failed watch restoration closes the replacement connection', async () => {
+  let connects = 0, replacementClosed = 0;
+  const old = Object.assign(new EventEmitter(), {
+    watchFile: async () => ({ projectId, path, watchId, live: true }),
+    listProjects: async () => { throw new AuthenticationError('Session expired'); },
+    close: async () => {},
+  });
+  const replacement = Object.assign(new EventEmitter(), {
+    watchFile: async () => { throw new AuthenticationError('Session expired while restoring watches'); },
+    close: async () => { replacementClosed++; },
+  });
+  const host = createMcpServer(async () => (++connects === 1 ? old : replacement) as any);
+  const client = new Client({ name: 'reconnect-test', version: '1' });
+  const [local, remote] = InMemoryTransport.createLinkedPair();
+  try {
+    await host.server.connect(remote); await client.connect(local);
+    await client.callTool({ name: 'watch_file', arguments: { projectId, path } });
+    await client.callTool({ name: 'list_projects' });
+    const result = await client.callTool({ name: 'list_projects' });
+    assert.equal(result.isError, true);
+    assert.equal(replacementClosed, 1);
+  } finally { await client.close(); await host.close(); }
+});

@@ -76,26 +76,34 @@ test('replies distinguish rejection from an uncertain submission and never retry
   }
 });
 
-test('legacy rejection restores adjacent Unicode changes and marks restored deletions as undo operations', () => {
+test('legacy rejection restores adjacent and same-position Unicode changes', () => {
   const encoded = (value: string) => Buffer.from(value).toString('latin1');
-  const snapshot = { type: 'sharejs-text-ot', content: '前新词后', ranges: { changes: [
-    { id: 'insert', op: { p: 1, i: encoded('新词') } },
-    { id: 'delete', op: { p: 3, d: encoded('旧词') } },
-  ] } };
-  const plan = trackedChangePlan(snapshot, ['insert', 'delete'], 'reject');
-  let text = snapshot.content;
-  for (const op of plan.op as any[]) {
-    if ('i' in op) {
-      assert.equal(op.u, true, 'Overleaf uses the undo flag to clear the restored deletion marker');
-      text = text.slice(0, op.p) + op.i + text.slice(op.p);
-    } else {
-      assert.equal(text.slice(op.p, op.p + op.d.length), op.d);
-      text = text.slice(0, op.p) + text.slice(op.p + op.d.length);
+  for (const fixture of [
+    { content: '前新词后', expected: '前旧词后', changes: [
+      { id: 'insert', op: { p: 1, i: encoded('新词') } },
+      { id: 'delete', op: { p: 3, d: encoded('旧词') } },
+    ] },
+    { content: '新后', expected: '前后', changes: [
+      { id: 'delete', op: { p: 0, d: encoded('前') } },
+      { id: 'insert', op: { p: 0, i: encoded('新') } },
+    ] },
+  ]) {
+    const snapshot = { type: 'sharejs-text-ot', content: fixture.content, ranges: { changes: fixture.changes } };
+    const plan = trackedChangePlan(snapshot, ['insert', 'delete'], 'reject');
+    let text = snapshot.content;
+    for (const op of plan.op as any[]) {
+      if ('i' in op) {
+        assert.equal(op.u, true, 'Overleaf uses the undo flag to clear the restored deletion marker');
+        text = text.slice(0, op.p) + op.i + text.slice(op.p);
+      } else {
+        assert.equal(text.slice(op.p, op.p + op.d.length), op.d);
+        text = text.slice(0, op.p) + text.slice(op.p + op.d.length);
+      }
     }
+    assert.equal(text, fixture.expected);
+    assert.equal(plan.expectedContent, text);
   }
-  assert.equal(text, '前旧词后');
-  assert.equal(plan.expectedContent, text);
-  assert.throws(() => commentOperation({ ...snapshot, content: '😀' }, '😀', threadId), /UNSUPPORTED_CHARACTER/);
+  assert.throws(() => commentOperation({ type: 'sharejs-text-ot', content: '😀' }, '😀', threadId), /UNSUPPORTED_CHARACTER/);
 });
 
 test('modern review decisions preserve other tracked ranges and use snapshot Unicode offsets', () => {
@@ -147,6 +155,24 @@ test('thread deletion checks the source location before sending the mutation', a
   service.client.getReview = async () => ({ projectId, complete: true, unavailable: [], observedAt: '', threads: {}, files: [{ path: 'other.tex', comments: [{ threadId }] }] } as any);
   await assert.rejects(service.client.changeCommentThread(projectId, 'main.tex', threadId, 'delete'), /other\.tex/);
   assert.equal(service.posts(), 0);
+});
+
+test('rejection readback follows the applied version when Overleaf reuses a change ID for surviving text', async () => {
+  const service = documentBackend();
+  let applied = false;
+  service.page.evaluate = async (fn?: unknown) => {
+    if ((fn as Function).name === 'submitDocumentEdit') {
+      applied = true;
+      return { acceptedVersion: 3, concurrentChanges: false } as any;
+    }
+    return { ...service.snapshot, version: applied ? 3 : 2, content: applied ? 'b' : 'axb', ranges: { changes: applied
+      ? [{ id: 'first', op: { p: 0, i: 'b' } }]
+      : [{ id: 'first', op: { p: 0, i: 'a' } }, { id: 'middle', op: { p: 1, i: 'x' } }, { id: 'last', op: { p: 2, i: 'b' } }], comments: [] } };
+  };
+  const result = await service.client.decideTrackedChanges(projectId, 'main.tex', service.snapshot.docId, 2, ['first', 'middle'], 'reject');
+  assert.equal(result.verified, true);
+  assert.equal('matchesRequestedContent' in result && result.matchesRequestedContent, true);
+  assert.equal('content' in result && result.content, 'b');
 });
 
 test('comment creation reports its posted thread when attaching the source range needs a fresh version', async () => {

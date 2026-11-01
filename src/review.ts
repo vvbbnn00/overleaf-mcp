@@ -53,7 +53,8 @@ export function trackedChangePlan(snapshot: any, changeIds: string[], action: 'a
   if (!modern) {
     if (action === 'accept') return { op: [], expectedContent };
     const op: unknown[] = [];
-    for (const change of selected.sort((a: any, b: any) => b.op.p - a.op.p)) {
+    // At one offset, remove the inserted text before restoring deleted text.
+    for (const change of selected.sort((a: any, b: any) => b.op.p - a.op.p || Number(typeof b.op.i === 'string') - Number(typeof a.op.i === 'string'))) {
       const insertion = typeof change.op.i === 'string';
       const text = decodeLegacy(insertion ? change.op.i : change.op.d);
       const p = change.op.p;

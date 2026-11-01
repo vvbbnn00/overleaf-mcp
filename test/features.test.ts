@@ -131,6 +131,26 @@ test('auto compilation reports syntax errors without starting a local build', as
   assert.equal(result.status, 'compile-error');
 });
 
+test('the requested compile timeout reaches the remote HTTP request', async t => {
+  const previousDocument = (globalThis as any).document;
+  (globalThis as any).document = { querySelector: () => null };
+  t.after(() => { (globalThis as any).document = previousDocument; });
+  const timeouts: number[] = [];
+  t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => {
+    timeouts.push(milliseconds);
+    return AbortSignal.abort(new Error('Compile request timed out'));
+  });
+  t.mock.method(globalThis, 'fetch', async (_url: string, options: RequestInit) => {
+    options.signal!.throwIfAborted();
+    throw new Error('Expected the compile request to time out');
+  });
+  const dashboard = { evaluate: async (run: any, input: any) => run(input) };
+  const client = Reflect.construct(OverleafClient, [{}, {}, dashboard]) as OverleafClient;
+  client.getProject = async () => ({ id: 'project', name: 'Project', rootDocId: 'doc', files: [{ id: 'doc', path: 'main.tex', kind: 'doc' }] });
+  await assert.rejects(compileProject(client, { projectId: 'project', mode: 'remote', timeoutSeconds: 7 }), /timed out/);
+  assert.deepEqual(timeouts, [7000]);
+});
+
 test('project pagination collects every page and detects a non-progressing server', async () => {
   const client = Reflect.construct(OverleafClient, [{}, {}, {}]) as OverleafClient;
   let calls = 0;
