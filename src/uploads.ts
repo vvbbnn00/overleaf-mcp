@@ -18,15 +18,16 @@ export function uploadDestination(localPath: string, targetPath?: string) {
 export async function loadUpload(localPath: string, maxBytes: number) {
   if (!isAbsolute(localPath)) throw new Error('localPath must be an absolute path');
   const sourcePath = await realpath(localPath);
+  const credentials = await Promise.all([realpath(authPath), stat(authPath)]).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined;
+    throw error;
+  });
+  if (sourcePath === credentials?.[0]) throw new Error('The saved Overleaf session cannot be uploaded');
   const file = await open(sourcePath, constants.O_RDONLY | constants.O_NONBLOCK);
   try {
     const info = await file.stat();
     if (!info.isFile()) throw new Error('localPath must refer to a regular file');
-    const credentials = await stat(authPath).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return undefined;
-      throw error;
-    });
-    if (credentials && credentials.dev === info.dev && credentials.ino === info.ino) throw new Error('The saved Overleaf session cannot be uploaded');
+    if (credentials && credentials[1].dev === info.dev && credentials[1].ino === info.ino) throw new Error('The saved Overleaf session cannot be uploaded');
     if (info.size > maxBytes) throw new Error(`Upload exceeds the server file-size limit (${maxBytes} bytes)`);
     // Bound the read even if another process grows the source after stat().
     const chunks: Buffer[] = [];

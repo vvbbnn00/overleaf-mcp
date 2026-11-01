@@ -3,11 +3,14 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 
 const directory = await mkdtemp(join(tmpdir(), 'overleaf-uploads-test-'));
 process.env.OVERLEAF_STATE_DIR = join(directory, 'state');
 const { uploadDestination, loadUpload, uploadedTextMatches } = await import('../src/uploads.js');
 const { OverleafClient } = await import('../src/client.js');
+const { authPath } = await import('../src/session.js');
 after(() => rm(directory, { recursive: true, force: true }));
 const projectId = '0123456789abcdef01234567';
 const newId = 'bbbbbbbbbbbbbbbbbbbbbbbb';
@@ -93,4 +96,21 @@ test('a valid filename with a long extension does not produce an overlong stagin
   assert.equal(result.verified, true);
   assert.equal(result.path, name);
   assert.ok(server.sentNames[0].length <= 150);
+});
+
+test('session-file protection survives an atomic cookie refresh during the upload read', async t => {
+  await fs.promises.mkdir(join(directory, 'state'), { recursive: true });
+  await writeFile(authPath, 'synthetic old session');
+  const originalOpen = fs.promises.open;
+  t.mock.method(fs.promises, 'open', async (...args: any[]) => {
+    const handle = await originalOpen(...args as Parameters<typeof originalOpen>);
+    if (String(args[0]) === await fs.promises.realpath(authPath)) {
+      await writeFile(`${authPath}.new`, 'synthetic refreshed session');
+      await fs.promises.rename(`${authPath}.new`, authPath);
+    }
+    return handle;
+  });
+  syncBuiltinESMExports();
+  try { await assert.rejects(loadUpload(authPath, 1024), /session cannot be uploaded/); }
+  finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
 });
