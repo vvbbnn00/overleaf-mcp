@@ -16,7 +16,7 @@ This is an **unofficial, experimental integration**. It runs locally over stdio 
 | Uploads | Upload local text, images, PDFs and other files; optionally overwrite existing files |
 | Downloads | Download individual files, complete source ZIPs and accessible historical versions |
 | History | Read change records, labels, file-tree differences and text differences |
-| Collaboration and review | Read invited members, online users, comments, replies, resolution status, source positions and visible tracked changes |
+| Collaboration and review | Read invited members, online users, comments, replies, resolution status, source positions, and visible tracked changes; reply to existing comment threads |
 | Compilation | Compile on Overleaf or locally; retrieve the PDF and logs; fall back locally after remote timeouts or service errors |
 
 You can use a free Overleaf account. Account permissions, project permissions and plan limits still apply, including limits on history, tracked changes and compilation. The server does not impose an additional history time window.
@@ -141,10 +141,24 @@ The call returns a `jobId`. Poll `get_compile_result` until the job finishes. `s
 
 PDFs, logs and downloads are returned as MCP resources and local file paths. Preview support depends on your MCP client. Source ZIPs and compiled PDFs are separate downloads. Job IDs last for the current server process; saved files remain on disk.
 
+### Reply to an existing review comment thread
+
+Call `get_review` first, then pass an existing `threadId`, the `projectId`, and your reply `content` to `reply_to_comment`. The reply is posted as the signed-in Overleaf user.
+
+```json
+{
+  "projectId": "PROJECT_ID",
+  "threadId": "THREAD_ID",
+  "content": "YOUR_REPLY"
+}
+```
+
+`posted: true` means Overleaf accepted the reply. The result includes the refreshed `thread` when available; `readBackError` means refreshing the `thread` failed after the reply was accepted. On `REPLY_STATUS_UNKNOWN`, check `get_review` before retrying to avoid duplicate replies.
+
 ## Tool reference
 
 <details>
-<summary>All 20 tools</summary>
+<summary>All 21 tools</summary>
 
 | Tool | Purpose |
 |---|---|
@@ -166,6 +180,7 @@ PDFs, logs and downloads are returned as MCP resources and local file paths. Pre
 | `get_history_diff` | Compare project versions or a file within them |
 | `get_collaboration` | Read invited members and current online users |
 | `get_review` | Read comments, source positions and visible tracked changes |
+| `reply_to_comment` | Reply to an existing review comment thread |
 | `compile_project` | Start a remote, local or automatic compile job |
 | `get_compile_result` | Get a job's status and output files |
 
@@ -201,6 +216,8 @@ If requests demonstrably extend the session's expiry, the running server schedul
 - macOS and the official Overleaf service have been exercised. Other operating systems, self-hosted instances, large concurrent workloads, live `history-ot` projects and non-empty tracked-change data still need broader validation.
 
 Project creation/deletion, folder creation, general file rename/move/delete, invitation management, and accepting or rejecting tracked changes are not exposed as MCP tools.
+
+Review writes currently support replying to existing threads. Creating, resolving, reopening, or deleting comment threads, as well as editing or deleting messages, are not exposed as MCP tools.
 
 ## Development
 
