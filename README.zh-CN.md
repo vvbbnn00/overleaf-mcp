@@ -92,6 +92,11 @@ npm run login
 - 查看待处理批注及其源码位置。
 - 编译项目并打开生成的 PDF。
 
+### 查询项目、文件和历史
+
+- `list_history` 在每一页的变更组中按文件 `path`、作者 `authorId` 及时间范围 `since` 和 `until` 筛选。时间范围包含端点，支持带时区的 ISO 时间和 Unix 毫秒。即使当前页没有命中，也可以将返回的 `nextBeforeTimestamp` 作为 `before` 继续查询。CLI 用法为 `overleaf-mcp history <id> [before]`。
+- `list_history_labels` 可按版本号 `version` 和标签名称片段 `query` 筛选，名称匹配不区分大小写。
+
 ### 修改源码
 
 先读取文件，将返回的 `docId` 和 `version` 作为 `expectedDocId`、`expectedVersion` 传给 `write_file` 或 `replace_text`。

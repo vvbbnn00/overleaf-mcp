@@ -13,6 +13,7 @@ const projectId = z.string().regex(/^[a-f\d]{24}$/i);
 const filePath = z.string().min(1);
 const fileInput = { projectId, path: filePath };
 const authorId = z.string().min(1);
+const timestamp = z.union([z.number().int().nonnegative(), z.iso.datetime({ offset: true })]);
 const uriFor = (id: string, path: string) => `overleaf://projects/${id}/files/${encodeURIComponent(path)}`;
 function parseUri(value: string) {
   const url = new URL(value);
@@ -148,8 +149,11 @@ export function createMcpServer(connect = () => OverleafClient.connect()) {
   }, ({ projectId, localPath, path, overwrite }) => result(c => c.uploadFile(projectId, localPath, path, overwrite)));
   server.registerTool('download_file', { description: 'Download a text file or binary attachment as a local artifact. Text documents come from a fresh live snapshot.', inputSchema: fileInput, annotations }, ({ projectId, path }) => result(c => c.downloadFile(projectId, path)));
   server.registerTool('download_project', { description: "Download the current source ZIP or an accessible historical version. Use project-history version numbers returned by list_history for historyVersion.", inputSchema: { projectId, historyVersion: z.number().int().nonnegative().optional() }, annotations }, ({ projectId, historyVersion }) => result(c => c.downloadProject(projectId, historyVersion)));
-  server.registerTool('list_history_labels', { description: "Return project version labels accessible to the current account.", inputSchema: { projectId }, annotations }, ({ projectId }) => result(c => c.historyLabels(projectId)));
-  server.registerTool('get_history_diff', { description: "Compare two project-history versions. Supply path for single-file text differences; omit path for file-tree differences. Use versions returned by list_history.", inputSchema: { projectId, from: z.number().int().nonnegative(), to: z.number().int().nonnegative(), path: z.string().optional() }, annotations }, ({ projectId, from, to, path }) => result(c => c.historyDiff(projectId, from, to, path)));
+  server.registerTool('list_history_labels', {
+    description: 'Read project version labels. Filter by exact version or case-insensitive label name substring (query).',
+    inputSchema: z.strictObject({ projectId, version: z.number().int().nonnegative().optional(), query: z.string().trim().min(1).optional() }), annotations,
+  }, ({ projectId, ...filters }) => result(c => c.historyLabels(projectId, filters)));
+  server.registerTool('get_history_diff', { description: "Compare two project-history versions. Supply path for single-file text differences; omit path for file-tree differences. Use versions returned by list_history.", inputSchema: z.strictObject({ projectId, from: z.number().int().nonnegative(), to: z.number().int().nonnegative(), path: filePath.optional() }), annotations }, ({ projectId, from, to, path }) => result(c => c.historyDiff(projectId, from, to, path)));
   server.registerTool('compile_project', {
     description: 'Start compilation and return a job ID immediately. mode=auto tries Overleaf first and falls back locally for timeout/service errors. Local compilation needs latexmk and the selected engine. Poll get_compile_result for this build PDF and logs.',
     inputSchema: { projectId, mode: z.enum(['auto', 'remote', 'local']).default('auto'), rootPath: z.string().optional(), compiler: z.enum(['pdflatex', 'xelatex', 'lualatex']).optional(), timeoutSeconds: z.number().int().min(1).max(600).default(120) },
@@ -221,9 +225,12 @@ export function createMcpServer(connect = () => OverleafClient.connect()) {
     return { removed };
   }));
   server.registerTool('list_history', {
-    description: "Return history entries and pagination data from the Overleaf API. Pass its pagination cursor in before to read the next page.",
-    inputSchema: { projectId, before: z.string().optional() }, annotations,
-  }, ({ projectId, before }) => result(c => c.history(projectId, before)));
+    description: 'Read a page of history with optional exact file path, author ID, or inclusive time window (since/until as ISO dates with a time zone or Unix milliseconds). Pass nextBeforeTimestamp in before to continue, even when a filtered page is empty. String cursors are also accepted.',
+    inputSchema: z.strictObject({
+      projectId, before: z.union([z.number().int().nonnegative(), z.string().min(1)]).optional(),
+      path: filePath.optional(), authorId: authorId.optional(), since: timestamp.optional(), until: timestamp.optional(),
+    }), annotations,
+  }, ({ projectId, before, ...filters }) => result(c => c.history(projectId, before, filters)));
   server.registerResource('live_file', new ResourceTemplate('overleaf://projects/{projectId}/files/{path}', { list: undefined }), { description: 'Latest server-confirmed text file content', mimeType: 'text/plain' }, async uri => {
     const { projectId, path } = parseUri(uri.href);
     const connection = getClient();

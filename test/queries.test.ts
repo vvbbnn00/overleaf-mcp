@@ -72,6 +72,31 @@ test('comment filters use thread status, keep unanchored threads project-wide an
   assert.equal((await call('list_comment_threads', { projectId, resolve: false })).isError, true);
 });
 
+test('history accepts returned numeric cursors and keeps continuation on filtered empty pages', async t => {
+  const { backend, call, query } = await setup(t);
+  const base = `/project/${projectId}/updates`;
+  const update = { fromV: 1, toV: 2, pathnames: ['old.tex'], project_ops: [{ rename: { pathname: 'old.tex', newPathname: 'new.tex' } }],
+    meta: { users: [null, { id: authorId }], start_ts: 100, end_ts: 200 } };
+  const requests: string[] = [];
+  backend.request = async path => {
+    requests.push(path);
+    if (path === base) return { updates: [update], nextBeforeTimestamp: 100 };
+    assert.ok([`${base}?before=100`, `${base}?before=0`, `${base}?before=old%2Bcursor`].includes(path));
+    return { updates: [] };
+  };
+  const initial = await query('list_history', { projectId, path: 'missing.tex' });
+  assert.deepEqual(initial, { updates: [], nextBeforeTimestamp: 100 });
+  await query('list_history', { projectId, before: initial.nextBeforeTimestamp });
+  await query('list_history', { projectId, before: 0 });
+  await query('list_history', { projectId, before: 'old+cursor' });
+  assert.deepEqual(requests.slice(1), [`${base}?before=100`, `${base}?before=0`, `${base}?before=old%2Bcursor`]);
+  const filtered = await query('list_history', { projectId, path: 'new.tex', authorId, since: '1970-01-01T00:00:00.200Z', until: 200 });
+  assert.deepEqual(filtered.updates, [update]);
+  assert.deepEqual((await query('list_history', { projectId, authorId: 'other' })).updates, []);
+  assert.deepEqual((await query('list_history', { projectId, since: 201 })).updates, []);
+  assert.equal((await call('list_history', { projectId, since: 5, until: 2 })).isError, true);
+});
+
 test('tracked-only review skips threads and filters by author in both document protocols', async t => {
   const { backend, query } = await setup(t);
   const docs = ['main.tex', 'second.tex'];
@@ -96,4 +121,16 @@ test('tracked-only review skips threads and filters by author in both document p
   const file = await query('get_review', { projectId, path: docs[0], trackedChanges: {} });
   assert.equal(file.files[0].trackedChanges.length, 2);
   assert.equal('comments' in file.files[0], false);
+});
+
+test('label filters combine exact versions and name substrings', async t => {
+  const { backend, query } = await setup(t);
+  const labels = [{ version: 0, comment: 'Draft' }, { version: 1, comment: 'FINAL draft' }, { version: 1, comment: 'Supplement' }];
+  backend.request = async path => {
+    assert.equal(path, `/project/${projectId}/labels`);
+    return labels;
+  };
+  assert.deepEqual((await query('list_history_labels', { projectId })).labels, labels);
+  assert.deepEqual((await query('list_history_labels', { projectId, version: 1, query: 'draft' })).labels, [labels[1]]);
+  assert.deepEqual((await query('list_history_labels', { projectId, version: 0 })).labels, [labels[0]]);
 });

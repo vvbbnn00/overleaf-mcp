@@ -14,6 +14,12 @@ type ProjectConnection = { page: Page; dirtyTree: boolean };
 type ProjectSummary = { id: string; name: string; rootDocId?: string; compiler?: string; spellCheckLanguage?: string; files: ProjectFile[]; folders?: { id: string; path: string }[] };
 type Watch = { projectId: string; docId?: string; path: string; current: any; dirty: boolean; refresh?: Promise<void> };
 type CommentQuery = { path?: string; resolved?: boolean; threadId?: string };
+type HistoryQuery = { path?: string; authorId?: string; since?: string | number; until?: string | number };
+type HistoryUpdate = {
+  pathnames?: string[];
+  project_ops?: { add?: { pathname: string }; remove?: { pathname: string }; rename?: { pathname: string; newPathname: string } }[];
+  meta?: { users?: ({ id?: string } | string | number | null)[]; start_ts?: number; end_ts?: number };
+};
 type TrackedChangeQuery = { kind?: 'insert' | 'delete'; authorId?: string };
 
 export class OverleafClient extends EventEmitter {
@@ -691,21 +697,36 @@ export class OverleafClient extends EventEmitter {
     });
   }
 
-  async history(projectId: string, before?: string) {
+  async history(projectId: string, before?: number | string, { path, authorId, since, until }: HistoryQuery = {}) {
     if (!/^[a-f\d]{24}$/i.test(projectId)) throw new Error('Invalid project ID');
-    // No locally imposed time window; preserve the API's pagination and errors.
-    return this.request(`/project/${projectId}/updates${before ? `?before=${encodeURIComponent(before)}` : ''}`);
+    const start = typeof since === 'string' ? Date.parse(since) : since;
+    const end = typeof until === 'string' ? Date.parse(until) : until;
+    if (start !== undefined && end !== undefined && start > end) throw new Error('since must be at or before until');
+    const page: { updates: HistoryUpdate[]; [key: string]: unknown } = await this.request(`/project/${projectId}/updates${before === undefined ? '' : `?before=${encodeURIComponent(String(before))}`}`);
+    if (path === undefined && authorId === undefined && start === undefined && end === undefined) return page;
+    const updates = page.updates.filter(update => {
+      const { meta } = update;
+      if (start !== undefined && !(meta?.end_ts !== undefined && meta.end_ts >= start)) return false;
+      if (end !== undefined && !(meta?.start_ts !== undefined && meta.start_ts <= end)) return false;
+      if (authorId !== undefined && !meta?.users?.some(user => user !== null && (typeof user === 'object' ? user.id : String(user)) === authorId)) return false;
+      return path === undefined || update.pathnames?.includes(path) || update.project_ops?.some(op =>
+        [op.add?.pathname, op.remove?.pathname, op.rename?.pathname, op.rename?.newPathname].includes(path));
+    });
+    return { ...page, updates };
   }
 
-  async historyLabels(projectId: string) {
+  async historyLabels(projectId: string, { version, query }: { version?: number; query?: string } = {}) {
     if (!/^[a-f\d]{24}$/i.test(projectId)) throw new Error('Invalid project ID');
-    return { projectId, labels: await this.request(`/project/${projectId}/labels`) };
+    const labels: { version: number; comment: string; [key: string]: unknown }[] = await this.request(`/project/${projectId}/labels`);
+    const name = query?.toLowerCase();
+    return { projectId, labels: labels.filter(label => (version === undefined || label.version === version) &&
+      (name === undefined || label.comment.toLowerCase().includes(name))) };
   }
 
   async historyDiff(projectId: string, from: number, to: number, path?: string) {
     if (!/^[a-f\d]{24}$/i.test(projectId)) throw new Error('Invalid project ID');
-    const query = new URLSearchParams({ from: String(from), to: String(to), ...(path ? { pathname: path } : {}) });
-    return this.request(`/project/${projectId}/${path ? 'diff' : 'filetree/diff'}?${query}`);
+    const query = new URLSearchParams({ from: String(from), to: String(to), ...(path !== undefined && { pathname: path }) });
+    return this.request(`/project/${projectId}/${path === undefined ? 'filetree/diff' : 'diff'}?${query}`);
   }
 
   async close() {

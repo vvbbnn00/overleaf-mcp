@@ -92,6 +92,11 @@ Start with `list_projects` to get a project ID, then `get_project` to see its fi
 - Show open comments and their source locations.
 - Compile the project and open the resulting PDF.
 
+### Find projects, files and history
+
+- `list_history` filters each page of update groups by exact `path`, `authorId` and the inclusive time window `since` and `until`. Times accept ISO timestamps with a time zone or Unix milliseconds. Pass `nextBeforeTimestamp` as `before` to continue, even if a filtered page has no matches. The CLI accepts `overleaf-mcp history <id> [before]`.
+- `list_history_labels` filters by exact `version` and by a case-insensitive name substring (`query`).
+
 ### Edit source
 
 Read the file first. Pass its returned `docId` and `version` as `expectedDocId` and `expectedVersion` to `write_file` or `replace_text`.
