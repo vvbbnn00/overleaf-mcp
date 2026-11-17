@@ -209,6 +209,8 @@ PDF、日志和下载文件会作为 MCP 资源及本地文件路径返回，能
 
 `get_collaboration` 返回受邀成员和在线用户。通过共享链接访问的协作者在连接期间会显示在在线用户列表中。`get_review` 中，`path` 用于选择查看源码批注和修订的文件，`threads` 包含项目范围内的全部可见批注线程。
 
+给 `get_collaboration` 传入 `include: "members"` 或 `include: "presence"`，可分别只查询受邀成员或在线用户。
+
 ## 配置和本地数据
 
 | 环境变量 | 默认值 | 用途 |

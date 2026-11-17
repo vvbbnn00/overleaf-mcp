@@ -209,6 +209,8 @@ Use project-history versions from the history tools to compare or download histo
 
 `get_collaboration` returns invited members and online users. Collaborators using shared links appear among online users while connected. In `get_review`, `path` selects the file for source annotations and tracked changes; `threads` contains the project-wide comment threads.
 
+Use `include: "members"` or `include: "presence"` in `get_collaboration` to request either part separately.
+
 ## Configuration and local data
 
 | Environment variable | Default | Purpose |

@@ -209,3 +209,28 @@ test('label filters combine exact versions and name substrings', async t => {
   assert.deepEqual((await query('list_history_labels', { projectId, version: 1, query: 'draft' })).labels, [labels[1]]);
   assert.deepEqual((await query('list_history_labels', { projectId, version: 0 })).labels, [labels[0]]);
 });
+
+test('members and presence can be queried independently of each other', async t => {
+  const { backend, query } = await setup(t);
+  const calls: string[] = [];
+  let offline = false;
+  backend.request = async path => {
+    assert.equal(path, `/project/${projectId}/members`);
+    calls.push('members');
+    return { members: [{ id: authorId }] };
+  };
+  (backend as any).project = async () => {
+    calls.push('presence');
+    if (offline) throw new Error('Offline');
+    return { page: { evaluate: async () => ({ status: 'available', users: [] }) } };
+  };
+  assert.deepEqual(await query('get_collaboration', { projectId, include: 'members' }), { projectId, invitedMembers: [{ id: authorId }] });
+  assert.deepEqual(calls.splice(0), ['members']);
+  assert.deepEqual(await query('get_collaboration', { projectId, include: 'presence' }), { projectId, presence: { status: 'available', users: [] } });
+  assert.deepEqual(calls.splice(0), ['presence']);
+  offline = true;
+  const both = await query('get_collaboration', { projectId });
+  assert.deepEqual(both.invitedMembers, [{ id: authorId }]);
+  assert.equal(both.presence.status, 'unknown');
+  assert.deepEqual(calls, ['members', 'presence']);
+});

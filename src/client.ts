@@ -555,16 +555,22 @@ export class OverleafClient extends EventEmitter {
 
   unwatchFile(watchId: string) { return this.watches.delete(watchId); }
 
-  async getCollaboration(projectId: string) {
-    const { page } = await this.project(projectId);
-    const membership = await this.request(`/project/${projectId}/members`);
+  async getCollaboration(projectId: string, include: 'all' | 'members' | 'presence' = 'all') {
+    if (!/^[a-f\d]{24}$/i.test(projectId)) throw new Error('Invalid project ID');
+    const membership = include === 'presence' ? undefined : await this.request(`/project/${projectId}/members`);
+    const result = { projectId, ...(include !== 'presence' && { invitedMembers: membership.members }) };
+    if (include === 'members') return result;
     let presence;
     try {
+      const { page } = await this.project(projectId);
       presence = await page.evaluate(readLivePresence);
-    } catch (error) { presence = { status: 'unknown', error: safeErrorMessage(error), observedAt: new Date().toISOString() }; }
+    } catch (error) {
+      if (error instanceof AuthenticationError) throw error;
+      presence = { status: 'unknown', error: safeErrorMessage(error), observedAt: new Date().toISOString() };
+    }
     // /members lists explicitly invited collaborators, not everyone who opened
     // an editable sharing link. Presence is an independent observation.
-    return { projectId, invitedMembers: membership.members, presence };
+    return { ...result, presence };
   }
 
   private async readReviewFiles<T>(projectId: string, path: string | undefined, view: (path: string, snapshot: Awaited<ReturnType<typeof readLiveDocument>>) => T) {

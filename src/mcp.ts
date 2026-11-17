@@ -103,7 +103,10 @@ export function createMcpServer(connect = () => OverleafClient.connect()) {
     }), annotations,
   }, options => result(c => c.listProjects(options)));
   server.registerTool('get_project', { description: 'Get the live project file tree and main document.', inputSchema: { projectId }, annotations }, ({ projectId }) => result(c => c.getProject(projectId)));
-  server.registerTool('get_collaboration', { description: "Read invited members and current online users. Shared-link collaborators appear in presence while connected. Online connections are grouped by account; presence.status describes availability.", inputSchema: { projectId }, annotations }, ({ projectId }) => result(c => c.getCollaboration(projectId)));
+  server.registerTool('get_collaboration', {
+    description: 'Read invited members and current online users, or choose only members or presence using include. Shared-link collaborators appear in presence while connected. Online connections are grouped by account. Check presence.status for availability.',
+    inputSchema: z.strictObject({ projectId, include: z.enum(['all', 'members', 'presence']).default('all') }), annotations,
+  }, ({ projectId, include }) => result(c => c.getCollaboration(projectId, include)));
   server.registerTool('get_review', {
     description: 'Read project-wide comments and per-file source anchors and tracked changes. path limits the document scan; threads remain project-wide. Supply trackedChanges (even {}) to return only tracked changes, optionally filtered by kind or authorId. Use list_comment_threads to filter comments.',
     inputSchema: z.strictObject({
