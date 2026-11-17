@@ -94,6 +94,7 @@ Start with `list_projects` to get a project ID, then `get_project` to see its fi
 
 ### Find projects, files and history
 
+- `list_projects` filters by name substring (`search`), tag name, `status` (`active`, `archived` or `trashed`), and `ownership` (`owned` or `shared`). Set `limit` for a page and pass `nextCursor` as `cursor` with the same filters for the next page.
 - `list_history` filters each page of update groups by exact `path`, `authorId` and the inclusive time window `since` and `until`. Times accept ISO timestamps with a time zone or Unix milliseconds. Pass `nextBeforeTimestamp` as `before` to continue, even if a filtered page has no matches. The CLI accepts `overleaf-mcp history <id> [before]`.
 - `list_history_labels` filters by exact `version` and by a case-insensitive name substring (`query`).
 
@@ -170,7 +171,7 @@ Start with `read_file` and `get_review`. For document edits, copy `docId` to `ex
 | Tool | Purpose |
 |---|---|
 | `get_session_status` | Check login, observed session renewal and the next keepalive |
-| `list_projects` | List projects accessible to the account |
+| `list_projects` | Filter and page through accessible projects |
 | `get_project` | Get the file tree, folder IDs and main document |
 | `read_file` | Read current text, optionally by line range |
 | `watch_file` | Start watching a text file |

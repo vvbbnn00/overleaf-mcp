@@ -97,6 +97,51 @@ test('history accepts returned numeric cursors and keeps continuation on filtere
   assert.equal((await call('list_history', { projectId, since: 5, until: 2 })).isError, true);
 });
 
+test('project filters reach Overleaf and a bounded page can continue through upstream pagination', async t => {
+  const { backend, call, query } = await setup(t);
+  const rows = [1, 2, 3, 4].map(n => ({ id: String(n).repeat(24) }));
+  const requests: any[] = [];
+  backend.request = async (path, method, body: any) => {
+    assert.equal(path, '/api/project');
+    assert.equal(method, 'POST');
+    requests.push(body);
+    const start = rows.findIndex(row => row.id === body.page.lastId) + 1;
+    return { totalSize: rows.length, projects: rows.slice(start, start + Math.min(body.page.size, 3)) };
+  };
+  const args = { search: 'paper', tag: 'work', status: 'archived', ownership: 'shared', limit: 2 };
+  const first = await query('list_projects', args);
+  assert.deepEqual(requests, [{ filters: { search: 'paper', tag: 'work', archived: true, sharedWithUser: true }, sort: { by: 'lastUpdated', order: 'desc' }, page: { size: 3 } }]);
+  assert.deepEqual(first, { projects: rows.slice(0, 2), totalSize: 4, complete: false, nextCursor: rows[1].id });
+  assert.deepEqual(await query('list_projects', { ...args, cursor: first.nextCursor }), { projects: rows.slice(2), totalSize: 4, complete: true });
+  assert.equal(requests[2].page.lastId, rows[2].id);
+  assert.equal((await call('list_projects', { filters: { search: 'paper' } })).isError, true);
+});
+
+test('project cursors also work when Overleaf returns a full list and active excludes archived and trashed projects', async t => {
+  const { backend, query } = await setup(t);
+  const rows = [
+    { id: '1'.repeat(24), archived: true }, { id: '2'.repeat(24) },
+    { id: '3'.repeat(24), trashed: true }, { id: '4'.repeat(24) },
+  ];
+  backend.request = async () => ({ totalSize: rows.length, projects: rows });
+  assert.deepEqual(await query('list_projects'), { projects: rows, totalSize: 4, complete: true });
+  const first = await query('list_projects', { limit: 2 });
+  assert.deepEqual((await query('list_projects', { limit: 2, cursor: first.nextCursor })).projects, rows.slice(2));
+  const active = await query('list_projects', { status: 'active', limit: 1 });
+  assert.deepEqual(active, { projects: [rows[1]], totalSize: 2, complete: false, nextCursor: rows[1].id });
+  assert.deepEqual(await query('list_projects', { status: 'active', limit: 1, cursor: active.nextCursor }), { projects: [rows[3]], totalSize: 2, complete: true });
+});
+
+test('changing the project page size does not repeat earlier results when Overleaf ignores lastId', async t => {
+  const { backend, query } = await setup(t);
+  const rows = Array.from({ length: 10 }, (_, index) => ({ id: String(index).repeat(24) }));
+  backend.request = async (_path, _method, body: any) => ({ totalSize: rows.length, projects: rows.slice(0, body.page.size) });
+  const first = await query('list_projects', { limit: 4 });
+  const second = await query('list_projects', { limit: 1, cursor: first.nextCursor });
+  assert.deepEqual(second.projects, [rows[4]]);
+  assert.equal(second.nextCursor, rows[4].id);
+});
+
 test('tracked-only review skips threads and filters by author in both document protocols', async t => {
   const { backend, query } = await setup(t);
   const docs = ['main.tex', 'second.tex'];

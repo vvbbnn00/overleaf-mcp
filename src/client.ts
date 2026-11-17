@@ -14,6 +14,15 @@ type ProjectConnection = { page: Page; dirtyTree: boolean };
 type ProjectSummary = { id: string; name: string; rootDocId?: string; compiler?: string; spellCheckLanguage?: string; files: ProjectFile[]; folders?: { id: string; path: string }[] };
 type Watch = { projectId: string; docId?: string; path: string; current: any; dirty: boolean; refresh?: Promise<void> };
 type CommentQuery = { path?: string; resolved?: boolean; threadId?: string };
+type ProjectEntry = { id: string; archived?: boolean; trashed?: boolean; [key: string]: unknown };
+type ProjectQuery = {
+  search?: string;
+  tag?: string;
+  status?: 'active' | 'archived' | 'trashed';
+  ownership?: 'owned' | 'shared';
+  limit?: number;
+  cursor?: string;
+};
 type HistoryQuery = { path?: string; authorId?: string; since?: string | number; until?: string | number };
 type HistoryUpdate = {
   pathnames?: string[];
@@ -124,20 +133,43 @@ export class OverleafClient extends EventEmitter {
     return result.data;
   }
 
-  async listProjects() {
-    const projects: any[] = [];
+  async listProjects({ search, tag, status, ownership, limit, cursor }: ProjectQuery = {}) {
+    const filters = {
+      ...(search !== undefined && { search }), ...(tag !== undefined && { tag }),
+      ...(status === 'archived' && { archived: true }), ...(status === 'trashed' && { trashed: true }),
+      ...(ownership === 'owned' && { ownedByUser: true }), ...(ownership === 'shared' && { sharedWithUser: true }),
+    };
+    // Active is the intersection of not archived and not trashed; the dashboard API has no such filter.
+    const activeOnly = status === 'active';
+    const pageSize = activeOnly || limit === undefined || cursor !== undefined ? 100 : Math.min(100, limit + 1);
+    const projects: ProjectEntry[] = [];
     const seen = new Set<string>();
     let lastId: string | undefined;
-    let totalSize = 0;
-    do {
-      const page = await this.request('/api/project', 'POST', { filters: {}, sort: { by: 'lastUpdated', order: 'desc' }, page: { size: 100, ...(lastId ? { lastId } : {}) } });
+    // Re-find the caller's cursor in the ordered results. Some deployments ignore pagination parameters.
+    let start = cursor === undefined ? 0 : undefined;
+    let totalSize: number;
+    while (true) {
+      const page: { totalSize: number; projects: ProjectEntry[] } = await this.request('/api/project', 'POST', {
+        filters, sort: { by: 'lastUpdated', order: 'desc' },
+        page: { size: pageSize, ...(lastId !== undefined && { lastId }) },
+      });
       totalSize = page.totalSize;
-      const fresh = page.projects.filter((p: any) => !seen.has(p.id));
-      if (!fresh.length && projects.length < totalSize) throw new Error('Project pagination made no progress; the server did not return all projects');
-      for (const project of fresh) { seen.add(project.id); projects.push(project); }
+      const previousCount = seen.size;
+      for (const project of page.projects) {
+        if (seen.has(project.id)) continue;
+        seen.add(project.id);
+        if (activeOnly && (project.archived || project.trashed)) continue;
+        projects.push(project);
+        if (project.id === cursor) start = projects.length;
+      }
+      if (seen.size >= totalSize || (!activeOnly && start !== undefined && limit !== undefined && projects.length - start > limit)) break;
+      if (seen.size === previousCount) throw new Error('Project pagination made no progress; the server did not return all projects');
       lastId = page.projects.at(-1)?.id;
-    } while (projects.length < totalSize);
-    return { projects, totalSize, complete: true };
+    }
+    if (start === undefined) throw new Error('Project cursor not found. Start again with the same filters.');
+    const page = projects.slice(start, limit === undefined ? undefined : start + limit);
+    const nextCursor = start + page.length < projects.length ? page.at(-1)?.id : undefined;
+    return { projects: page, totalSize: activeOnly ? projects.length : totalSize, complete: nextCursor === undefined, ...(nextCursor !== undefined && { nextCursor }) };
   }
 
   async downloadBytes(path: string, timeout = 60000, allowHtml = false) {

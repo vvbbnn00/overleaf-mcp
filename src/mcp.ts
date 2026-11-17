@@ -94,7 +94,14 @@ export function createMcpServer(connect = () => OverleafClient.connect()) {
       return { isError: true, content: [{ type: 'text' as const, text: safeErrorMessage(error) }] };
     }
   });
-  server.registerTool('list_projects', { description: 'List projects accessible to the signed-in account, using the server response.', annotations }, () => result(c => c.listProjects()));
+  server.registerTool('list_projects', {
+    description: 'List accessible projects. Filter by name substring (search), tag name, status or ownership. Supply limit for a bounded page and pass nextCursor in cursor with the same filters to continue.',
+    inputSchema: z.strictObject({
+      search: z.string().trim().min(1).optional(), tag: z.string().min(1).optional(),
+      status: z.enum(['active', 'archived', 'trashed']).optional(), ownership: z.enum(['owned', 'shared']).optional(),
+      limit: z.number().int().positive().optional(), cursor: projectId.optional(),
+    }), annotations,
+  }, options => result(c => c.listProjects(options)));
   server.registerTool('get_project', { description: 'Get the live project file tree and main document.', inputSchema: { projectId }, annotations }, ({ projectId }) => result(c => c.getProject(projectId)));
   server.registerTool('get_collaboration', { description: "Read invited members and current online users. Shared-link collaborators appear in presence while connected. Online connections are grouped by account; presence.status describes availability.", inputSchema: { projectId }, annotations }, ({ projectId }) => result(c => c.getCollaboration(projectId)));
   server.registerTool('get_review', {
