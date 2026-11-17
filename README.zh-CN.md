@@ -144,6 +144,10 @@ PDF、日志和下载文件会作为 MCP 资源及本地文件路径返回，能
 
 ### 批注与修订
 
+使用 `list_comment_threads` 查询批注。`resolved: false` 查未解决，`resolved: true` 查已解决。还可以指定 `threadId` 或文件 `path`。指定文件时，结果包含对应的源码位置。查询失去源码锚点的线程时省略 `path`。
+
+给 `get_review` 传入 `trackedChanges: {}` 可以只查修订。还可以在该对象中按 `kind`（`insert` 或 `delete`）或 `authorId` 筛选。
+
 先调用 `read_file` 和 `get_review`。编辑文档时，将该文件最新返回的 `docId` 和 `version` 分别作为 `expectedDocId` 和 `expectedVersion`。
 
 - 使用 `create_comment` 创建批注，传入在文件中唯一匹配的原文 `quote` 和批注内容 `content`。
@@ -156,7 +160,7 @@ PDF、日志和下载文件会作为 MCP 资源及本地文件路径返回，能
 ## 工具列表
 
 <details>
-<summary>全部 29 个工具</summary>
+<summary>全部 30 个工具</summary>
 
 | 工具 | 用途 |
 |---|---|
@@ -178,6 +182,7 @@ PDF、日志和下载文件会作为 MCP 资源及本地文件路径返回，能
 | `get_history_diff` | 比较项目版本或其中某个文件 |
 | `get_collaboration` | 查询受邀成员和当前在线用户 |
 | `get_review` | 查询评论、源码位置和可见修订 |
+| `list_comment_threads` | 按解决状态、文件或线程 ID 查询批注 |
 | `reply_to_comment` | 回复已有批注线程 |
 | `create_comment` | 创建附加到源码的批注 |
 | `edit_comment_message` | 编辑批注或回复消息 |

@@ -144,6 +144,10 @@ PDFs, logs and downloads are returned as MCP resources and local file paths. Pre
 
 ### Comments and tracked changes
 
+Use `list_comment_threads` with `resolved: false` for open threads or `resolved: true` for resolved threads. Filter further by `threadId` or exact file `path`. A file-scoped result includes source ranges. Omit `path` when looking for threads without a source anchor.
+
+Pass `trackedChanges: {}` to `get_review` for tracked changes only. The object also accepts `kind` (`insert` or `delete`) and `authorId`.
+
 Start with `read_file` and `get_review`. For document edits, copy `docId` to `expectedDocId` and `version` to `expectedVersion` from the latest result for that file.
 
 - Use `create_comment` with a `quote` that appears once in the file and your comment `content`.
@@ -156,7 +160,7 @@ Start with `read_file` and `get_review`. For document edits, copy `docId` to `ex
 ## Tool reference
 
 <details>
-<summary>All 29 tools</summary>
+<summary>All 30 tools</summary>
 
 | Tool | Purpose |
 |---|---|
@@ -178,6 +182,7 @@ Start with `read_file` and `get_review`. For document edits, copy `docId` to `ex
 | `get_history_diff` | Compare project versions or a file within them |
 | `get_collaboration` | Read invited members and current online users |
 | `get_review` | Read comments, source positions and visible tracked changes |
+| `list_comment_threads` | Filter comment threads by resolution, file or thread ID |
 | `reply_to_comment` | Reply to an existing review comment thread |
 | `create_comment` | Create a comment attached to source text |
 | `edit_comment_message` | Edit a comment or reply message |

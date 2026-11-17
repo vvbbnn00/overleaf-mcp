@@ -6,13 +6,15 @@ import { flattenFiles, flattenFolders, renewalDelay, selectLines, textEditPlan, 
 import { saveArtifact } from './artifacts.js';
 import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { posix } from 'node:path';
-import { commentOperation, commentRangeOperations, documentReview, trackedChangePlan } from './review.js';
+import { commentOperation, commentRangeOperations, documentComments, documentReview, documentTrackedChanges, trackedChangePlan } from './review.js';
 import { loadUpload, uploadDestination, uploadedTextMatches } from './uploads.js';
 import { safeErrorMessage } from './errors.js';
 
 type ProjectConnection = { page: Page; dirtyTree: boolean };
 type ProjectSummary = { id: string; name: string; rootDocId?: string; compiler?: string; spellCheckLanguage?: string; files: ProjectFile[]; folders?: { id: string; path: string }[] };
 type Watch = { projectId: string; docId?: string; path: string; current: any; dirty: boolean; refresh?: Promise<void> };
+type CommentQuery = { path?: string; resolved?: boolean; threadId?: string };
+type TrackedChangeQuery = { kind?: 'insert' | 'delete'; authorId?: string };
 
 export class OverleafClient extends EventEmitter {
   private projects = new Map<string, Promise<ProjectConnection>>();
@@ -490,20 +492,50 @@ export class OverleafClient extends EventEmitter {
     return { projectId, invitedMembers: membership.members, presence };
   }
 
-  async getReview(projectId: string, path?: string) {
+  private async readReviewFiles<T>(projectId: string, path: string | undefined, view: (path: string, snapshot: Awaited<ReturnType<typeof readLiveDocument>>) => T) {
     if (!/^[a-f\d]{24}$/i.test(projectId)) throw new Error('Invalid project ID');
     const project = await this.getProject(projectId);
-    const docs = project.files.filter(file => file.kind === 'doc' && (!path || file.path === path));
-    if (path && !docs.length) throw new Error(`Text file not found: ${path}`);
-    const files = [];
+    const docs = project.files.filter(file => file.kind === 'doc' && (path === undefined || file.path === path));
+    if (path !== undefined && !docs.length) throw new Error(`Text file not found: ${path}`);
+    const files: T[] = [];
     const unavailable = [];
     for (const doc of docs) {
       try {
         const { page } = await this.project(projectId);
-        files.push(documentReview(doc.path, await page.evaluate(readLiveDocument, doc.id)));
-      } catch (error) { unavailable.push({ path: doc.path, error: safeErrorMessage(error) }); }
+        files.push(view(doc.path, await page.evaluate(readLiveDocument, doc.id)));
+      } catch (error) {
+        if (error instanceof AuthenticationError) throw error;
+        unavailable.push({ path: doc.path, error: safeErrorMessage(error) });
+      }
     }
-    return { projectId, threads: await this.request(`/project/${projectId}/threads`), files, unavailable, complete: unavailable.length === 0, observedAt: new Date().toISOString() };
+    return { files, unavailable, complete: unavailable.length === 0 };
+  }
+
+  async getReview(projectId: string, path?: string) {
+    const review = await this.readReviewFiles(projectId, path, documentReview);
+    return { projectId, threads: await this.request(`/project/${projectId}/threads`), ...review, observedAt: new Date().toISOString() };
+  }
+
+  async listTrackedChanges(projectId: string, path: string | undefined, { kind, authorId }: TrackedChangeQuery) {
+    const review = await this.readReviewFiles(projectId, path, (path, snapshot) => ({
+      path, docId: snapshot.docId, version: snapshot.version, receivedAt: snapshot.receivedAt,
+      trackedChanges: documentTrackedChanges(snapshot).filter(change => (kind === undefined || change.kind === kind) &&
+        (authorId === undefined || (change.metadata?.userId ?? change.metadata?.user_id) === authorId)),
+    }));
+    return { projectId, ...review, observedAt: new Date().toISOString() };
+  }
+
+  async listCommentThreads(projectId: string, { path, resolved, threadId }: CommentQuery = {}) {
+    if (!/^[a-f\d]{24}$/i.test(projectId)) throw new Error('Invalid project ID');
+    const snapshot = path === undefined ? undefined : (await this.reviewSnapshot(projectId, path)).snapshot;
+    const anchors = snapshot ? new Map(documentComments(snapshot).map(comment => [comment.threadId, comment.ranges])) : undefined;
+    const visible: Record<string, { resolved?: boolean; [key: string]: unknown }> = await this.request(`/project/${projectId}/threads`);
+    const threads = Object.entries(visible)
+      .filter(([id, thread]) => (threadId === undefined || id === threadId) &&
+        (resolved === undefined || Boolean(thread.resolved) === resolved) &&
+        (!anchors || anchors.has(id)))
+      .map(([id, thread]) => ({ ...thread, threadId: id, resolved: Boolean(thread.resolved), ...(anchors && { ranges: anchors.get(id) }) }));
+    return { projectId, ...(snapshot ? { path, docId: snapshot.docId, version: snapshot.version, receivedAt: snapshot.receivedAt } : {}), threads, observedAt: new Date().toISOString() };
   }
 
   async replyToComment(projectId: string, threadId: string, content: string) {

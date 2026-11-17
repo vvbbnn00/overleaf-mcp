@@ -10,7 +10,9 @@ import { randomUUID } from 'node:crypto';
 import { safeErrorMessage } from './errors.js';
 
 const projectId = z.string().regex(/^[a-f\d]{24}$/i);
-const fileInput = { projectId, path: z.string().min(1) };
+const filePath = z.string().min(1);
+const fileInput = { projectId, path: filePath };
+const authorId = z.string().min(1);
 const uriFor = (id: string, path: string) => `overleaf://projects/${id}/files/${encodeURIComponent(path)}`;
 function parseUri(value: string) {
   const url = new URL(value);
@@ -94,7 +96,17 @@ export function createMcpServer(connect = () => OverleafClient.connect()) {
   server.registerTool('list_projects', { description: 'List projects accessible to the signed-in account, using the server response.', annotations }, () => result(c => c.listProjects()));
   server.registerTool('get_project', { description: 'Get the live project file tree and main document.', inputSchema: { projectId }, annotations }, ({ projectId }) => result(c => c.getProject(projectId)));
   server.registerTool('get_collaboration', { description: "Read invited members and current online users. Shared-link collaborators appear in presence while connected. Online connections are grouped by account; presence.status describes availability.", inputSchema: { projectId }, annotations }, ({ projectId }) => result(c => c.getCollaboration(projectId)));
-  server.registerTool('get_review', { description: 'Read project-wide comments, replies and resolution status, plus file/line anchors and visible tracked changes. path limits the annotation scan to one text file; threads remain project-wide. Data is limited by server permissions.', inputSchema: { projectId, path: z.string().optional() }, annotations }, ({ projectId, path }) => result(c => c.getReview(projectId, path)));
+  server.registerTool('get_review', {
+    description: 'Read project-wide comments and per-file source anchors and tracked changes. path limits the document scan; threads remain project-wide. Supply trackedChanges (even {}) to return only tracked changes, optionally filtered by kind or authorId. Use list_comment_threads to filter comments.',
+    inputSchema: z.strictObject({
+      projectId, path: filePath.optional(),
+      trackedChanges: z.strictObject({ kind: z.enum(['insert', 'delete']).optional(), authorId: authorId.optional() }).optional(),
+    }), annotations,
+  }, ({ projectId, path, trackedChanges }) => result(c => trackedChanges === undefined ? c.getReview(projectId, path) : c.listTrackedChanges(projectId, path, trackedChanges)));
+  server.registerTool('list_comment_threads', {
+    description: 'List visible comment threads. Set resolved=false for open threads or true for resolved threads. Filter by threadId or by the threads anchored to an exact file path. File-scoped results include source ranges. Omit path to include threads without a source anchor.',
+    inputSchema: z.strictObject({ projectId, path: filePath.optional(), resolved: z.boolean().optional(), threadId: projectId.optional() }), annotations,
+  }, ({ projectId, ...filters }) => result(c => c.listCommentThreads(projectId, filters)));
   const writeAnnotations = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true };
   server.registerTool('reply_to_comment', {
     description: "Reply to an existing review thread as the signed-in user. Use a threadId from get_review. posted:true confirms acceptance; readBackError reports a subsequent refresh error. On REPLY_STATUS_UNKNOWN, refresh get_review before retrying.",
