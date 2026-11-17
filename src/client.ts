@@ -23,6 +23,7 @@ type ProjectQuery = {
   limit?: number;
   cursor?: string;
 };
+type FileSearch = { query: string; pathPrefix?: string; extension?: string; limit: number };
 type HistoryQuery = { path?: string; authorId?: string; since?: string | number; until?: string | number };
 type HistoryUpdate = {
   pathnames?: string[];
@@ -335,6 +336,42 @@ export class OverleafClient extends EventEmitter {
     const { page } = await this.project(projectId);
     const { ranges: _ranges, reviewComments: _comments, reviewChanges: _changes, ...snapshot } = await page.evaluate(readLiveDocument, file.id);
     return { projectId, path, ...snapshot, ...selectLines(snapshot.content, startLine, endLine) };
+  }
+
+  async searchFiles(projectId: string, { query, pathPrefix, extension, limit }: FileSearch, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const directory = pathPrefix === undefined ? '.' : posix.normalize(pathPrefix);
+    if (posix.isAbsolute(directory) || directory === '..' || directory.startsWith('../')) throw new Error('pathPrefix must be a project-relative directory');
+    const prefix = directory === '.' || directory === './' ? '' : `${directory.replace(/\/$/, '')}/`;
+    const { files } = await this.getProject(projectId);
+    const suffix = extension?.toLowerCase();
+    const docs = files.filter(file => file.kind === 'doc' && file.path.startsWith(prefix) &&
+      (suffix === undefined || posix.extname(file.path).toLowerCase() === suffix));
+    const matches = [];
+    const unavailable = [];
+    let truncated = false;
+    scan: for (const doc of docs) {
+      signal?.throwIfAborted();
+      let snapshot;
+      try {
+        const { page } = await this.project(projectId);
+        snapshot = await page.evaluate(readLiveDocument, doc.id);
+      } catch (error) {
+        if (error instanceof AuthenticationError) throw error;
+        unavailable.push({ path: doc.path, error: safeErrorMessage(error) });
+        continue;
+      }
+      signal?.throwIfAborted();
+      for (const [index, line] of snapshot.content.split('\n').entries()) {
+        const offset = line.indexOf(query);
+        if (offset < 0) continue;
+        if (matches.length === limit) { truncated = true; break scan; }
+        const start = Math.max(0, offset - 60);
+        matches.push({ path: doc.path, docId: snapshot.docId, version: snapshot.version,
+          line: index + 1, column: offset + 1, snippet: line.slice(start, start + 240) });
+      }
+    }
+    return { projectId, matches, truncated, unavailable, complete: !truncated && unavailable.length === 0 };
   }
 
   async writeFile(projectId: string, path: string, expectedDocId: string, expectedVersion: number, change: { content: string } | { oldText: string; newText: string }) {

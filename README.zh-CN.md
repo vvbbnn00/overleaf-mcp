@@ -95,6 +95,7 @@ npm run login
 ### 查询项目、文件和历史
 
 - `list_projects` 支持按项目名称片段（`search`）、标签名、状态 `status`（`active`、`archived` 或 `trashed`）及归属 `ownership`（`owned` 或 `shared`）筛选。用 `limit` 指定每页条数，续页时使用相同筛选条件，把 `nextCursor` 传给 `cursor`。
+- `search_files` 按原文搜索，区分大小写，每行返回首个匹配的位置和片段。用 `pathPrefix` 指定项目内目录，用 `extension` 指定后缀，例如 `.tex`。`limit` 默认 100，最多 500。用 `truncated` 和 `unavailable` 判断结果是否完整。
 - `list_history` 在每一页的变更组中按文件 `path`、作者 `authorId` 及时间范围 `since` 和 `until` 筛选。时间范围包含端点，支持带时区的 ISO 时间和 Unix 毫秒。即使当前页没有命中，也可以将返回的 `nextBeforeTimestamp` 作为 `before` 继续查询。CLI 用法为 `overleaf-mcp history <id> [before]`。
 - `list_history_labels` 可按版本号 `version` 和标签名称片段 `query` 筛选，名称匹配不区分大小写。
 
@@ -166,7 +167,7 @@ PDF、日志和下载文件会作为 MCP 资源及本地文件路径返回，能
 ## 工具列表
 
 <details>
-<summary>全部 30 个工具</summary>
+<summary>全部 31 个工具</summary>
 
 | 工具 | 用途 |
 |---|---|
@@ -174,6 +175,7 @@ PDF、日志和下载文件会作为 MCP 资源及本地文件路径返回，能
 | `list_projects` | 按条件分页查询账号可访问的项目 |
 | `get_project` | 获取文件树、文件夹 ID 和主文件 |
 | `read_file` | 读取最新文本，可指定行范围 |
+| `search_files` | 跨文件搜索源码文本 |
 | `watch_file` | 开始监听文本文件 |
 | `wait_for_file_change` | 等待版本或文档变化，最长 30 秒 |
 | `unwatch_file` | 停止通过工具创建的监听 |

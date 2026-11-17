@@ -184,6 +184,14 @@ export function createMcpServer(connect = () => OverleafClient.connect()) {
     description: "Read current text from the live document server. Each call gets a fresh snapshot and version. Optionally select a 1-based line range.",
     inputSchema: { ...fileInput, startLine: z.number().int().positive().optional(), endLine: z.number().int().positive().optional() }, annotations,
   }, ({ projectId, path, startLine, endLine }) => result(async c => ({ ...await c.readFile(projectId, path, startLine, endLine), resourceUri: uriFor(projectId, path) })));
+  server.registerTool('search_files', {
+    description: 'Search current text files for a literal, case-sensitive string. Optionally restrict to a project-relative directory (pathPrefix) or extension including the leading dot (e.g. .tex). Returns the first occurrence per matching line, with snippets and live document versions. Check truncated and unavailable for incomplete results.',
+    inputSchema: z.strictObject({
+      projectId, query: z.string().min(1).refine(query => !/[\r\n]/.test(query), 'Search text must be a single line'), pathPrefix: filePath.optional(),
+      extension: z.string().min(2).startsWith('.').refine(value => !/[./\\\s]/.test(value.slice(1))).optional(),
+      limit: z.number().int().min(1).max(500).default(100),
+    }), annotations,
+  }, ({ projectId, ...options }, extra) => result(c => c.searchFiles(projectId, options, extra.signal)));
   server.registerTool('watch_file', { description: 'Start watching server-pushed document changes. Use wait_for_file_change or subscribe to the returned resource URI.', inputSchema: fileInput, annotations }, ({ projectId, path }) => result(async c => {
     const uri = uriFor(projectId, path);
     toolWatches.add(uri);

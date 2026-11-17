@@ -142,6 +142,36 @@ test('changing the project page size does not repeat earlier results when Overle
   assert.equal(second.nextCursor, rows[4].id);
 });
 
+test('file search scopes live reads, caps results and reports unavailable matching files', async t => {
+  const { backend, call, query } = await setup(t);
+  const seen: string[] = [];
+  const paths = ['src/unavailable.tex', 'src/main.TEX', 'src/nested/second.tex', 'src-old/third.tex', 'src/notes.txt'];
+  backend.getProject = async () => ({ id: projectId, name: 'Sources', files: [
+    ...paths.map(path => ({ id: path, path, kind: 'doc' as const })), { id: 'binary', path: 'src/attachment.tex', kind: 'file' },
+  ] });
+  (backend as any).project = async () => ({ page: { evaluate: async (_read: unknown, docId: string) => {
+    seen.push(docId);
+    if (docId === paths[0]) throw new Error('Snapshot unavailable');
+    return { docId, version: 4, content: `First line\n${'x'.repeat(300)}量子量子` };
+  } } });
+  const results = await query('search_files', { projectId, query: '量子', pathPrefix: './src/', extension: '.tex', limit: 1 });
+  assert.deepEqual(seen, paths.slice(0, 3));
+  assert.equal(results.matches.length, 1);
+  const [match] = results.matches;
+  assert.equal(match.path, paths[1]);
+  assert.equal(match.version, 4);
+  assert.equal(match.line, 2);
+  assert.equal(match.column, 301);
+  assert.ok(match.snippet.includes('量子') && match.snippet.length <= 240);
+  assert.deepEqual(results.unavailable, [{ path: paths[0], error: 'Snapshot unavailable' }]);
+  assert.equal(results.truncated, true);
+  assert.equal(results.complete, false);
+  const root = await query('search_files', { projectId, query: '量子', pathPrefix: '.', extension: '.tex' });
+  assert.deepEqual(root.matches.map((item: any) => item.path), paths.slice(1, 4));
+  assert.equal((await call('search_files', { projectId, query: '量子', pathPrefix: '../other' })).isError, true);
+  assert.equal((await call('search_files', { projectId, query: '量子\n' })).isError, true);
+});
+
 test('tracked-only review skips threads and filters by author in both document protocols', async t => {
   const { backend, query } = await setup(t);
   const docs = ['main.tex', 'second.tex'];

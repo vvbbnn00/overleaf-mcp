@@ -95,6 +95,7 @@ Start with `list_projects` to get a project ID, then `get_project` to see its fi
 ### Find projects, files and history
 
 - `list_projects` filters by name substring (`search`), tag name, `status` (`active`, `archived` or `trashed`), and `ownership` (`owned` or `shared`). Set `limit` for a page and pass `nextCursor` as `cursor` with the same filters for the next page.
+- `search_files` matches literal, case-sensitive text and returns the first hit on each matching line. Use `pathPrefix` for a project-relative directory and `extension` for a suffix such as `.tex`. `limit` defaults to 100 and accepts up to 500. Check `truncated` and `unavailable` for incomplete results.
 - `list_history` filters each page of update groups by exact `path`, `authorId` and the inclusive time window `since` and `until`. Times accept ISO timestamps with a time zone or Unix milliseconds. Pass `nextBeforeTimestamp` as `before` to continue, even if a filtered page has no matches. The CLI accepts `overleaf-mcp history <id> [before]`.
 - `list_history_labels` filters by exact `version` and by a case-insensitive name substring (`query`).
 
@@ -166,7 +167,7 @@ Start with `read_file` and `get_review`. For document edits, copy `docId` to `ex
 ## Tool reference
 
 <details>
-<summary>All 30 tools</summary>
+<summary>All 31 tools</summary>
 
 | Tool | Purpose |
 |---|---|
@@ -174,6 +175,7 @@ Start with `read_file` and `get_review`. For document edits, copy `docId` to `ex
 | `list_projects` | Filter and page through accessible projects |
 | `get_project` | Get the file tree, folder IDs and main document |
 | `read_file` | Read current text, optionally by line range |
+| `search_files` | Find literal text across project files |
 | `watch_file` | Start watching a text file |
 | `wait_for_file_change` | Wait up to 30 seconds for a different version or document |
 | `unwatch_file` | Stop a tool-created watch |
